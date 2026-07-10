@@ -75,19 +75,16 @@ The site is gated by **Cloudflare Access** (Zero Trust). Only allow-listed email
 
 ## 7. Deploy / redeploy
 
-Deploys go straight to Cloudflare Pages via `wrangler` (no CI needed). **Deploy from a clean folder so the `.dev.vars` secret is never uploaded as a public asset:**
+**Just run `./deploy.sh "what changed"`** from the project folder. It (a) deploys to Cloudflare Pages from a clean staging dir so the `.dev.vars` secret is never uploaded, and (b) commits + pushes the source to GitHub so the repo stays in sync. One command = deployed + version-controlled.
 
 ```bash
-# from the project folder
-rm -rf /tmp/plex-deploy && mkdir -p /tmp/plex-deploy
-cp index.html usecase.html /tmp/plex-deploy/
-cp -r functions /tmp/plex-deploy/functions
-cd /tmp/plex-deploy
-npx wrangler@4 pages deploy . --project-name plexapp-forecast --branch main --commit-dirty true
+./deploy.sh "fix quarterly totals"
 ```
 
-- The production secret `PLEX_APIKEY` is already set on the Pages project. To rotate it: `npx wrangler@4 pages secret put PLEX_APIKEY --project-name plexapp-forecast`, then redeploy.
-- First-time wrangler auth: `npx wrangler@4 login`.
+Under the hood it's just `wrangler pages deploy` + `git push` — see `deploy.sh`. No CI needed.
+
+- First-time setup on a new machine: `npx wrangler@4 login` (Cloudflare) and `gh auth login` (GitHub).
+- The production secret `PLEX_APIKEY` is already set on the Pages project, so redeploys work without it. To rotate: `npx wrangler@4 pages secret put PLEX_APIKEY --project-name plexapp-forecast`, then redeploy.
 
 ## 8. How the CRM API works (and a gotcha that already bit us)
 
