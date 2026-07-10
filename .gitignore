@@ -1,0 +1,11 @@
+# Secrets — NEVER commit. The API key lives in Cloudflare's encrypted secrets,
+# and locally in .dev.vars (which stays on your machine only).
+.dev.vars
+.dev.vars.*
+
+# Wrangler / Cloudflare local state
+.wrangler/
+node_modules/
+
+# OS noise
+.DS_Store

@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Plex × Agency × Brand — Use Case</title>
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+<style>
+  @font-face {
+    font-family: 'PP Telegraf';
+    src: url('https://cdn.prod.website-files.com/69aa2d38f70b9d88f9caa165/69aa79838701c20d98654590_PPTelegraf-Variable.woff2') format('woff2');
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Inter';
+    src: url('https://cdn.prod.website-files.com/69aa2d38f70b9d88f9caa165/69aa70037ee7991aa2a90ffc_Inter-VariableFont_opsz%2Cwght.woff2') format('woff2');
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
+  :root {
+    --cream: #ede7d9;
+    --cream-light: #f5f0e8;
+    --ink: #1a1a1a;
+    --text: #3d3d3d;
+    --muted: #6b6b6b;
+    --border: #d8d0c4;
+    --accent: #c0392b;
+    --green: #6bcb77;
+    --white: #ffffff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--cream);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    padding: 3rem 6vw;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+  }
+
+  h1 {
+    font-family: 'PP Telegraf', serif;
+    font-size: clamp(2rem, 4vw, 3.25rem);
+    font-weight: 600;
+    line-height: 1.08;
+    letter-spacing: -1.5px;
+    color: var(--ink);
+    margin-bottom: 0.75rem;
+  }
+
+  .lede {
+    font-size: 1.1rem;
+    color: var(--muted);
+    max-width: 720px;
+    margin-bottom: 3rem;
+  }
+
+  h2 {
+    font-family: 'PP Telegraf', serif;
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+    margin-bottom: 0.5rem;
+  }
+
+  h2 .num {
+    color: var(--accent);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    display: block;
+    margin-bottom: 0.5rem;
+    font-family: 'Inter', sans-serif;
+  }
+
+  .panel {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .panel p.intro {
+    margin-bottom: 2rem;
+    color: var(--muted);
+    max-width: 720px;
+  }
+
+  /* === Diagram 1: Four-party model === */
+  .diagram-entities {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 1.5rem;
+    margin: 2rem 0 1.5rem 0;
+    position: relative;
+  }
+
+  .entity {
+    background: var(--cream-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    position: relative;
+  }
+
+  .entity.plex { background: var(--ink); color: var(--white); border-color: var(--ink); }
+  .entity.plex .entity-label { color: rgba(255,255,255,0.6); }
+  .entity.plex .entity-role { color: var(--white); }
+  .entity.plex .entity-eg { color: rgba(255,255,255,0.7); }
+
+  .entity-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.75rem;
+    color: var(--ink);
+  }
+  .entity.plex .entity-icon { background: var(--accent); border-color: var(--accent); color: var(--white); }
+  .entity-icon i { font-size: 1.1rem; }
+
+  .entity-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+  }
+  .entity-role {
+    font-family: 'PP Telegraf', serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 0.5rem;
+  }
+  .entity-eg {
+    font-size: 0.825rem;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  .relationships {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1.5rem;
+    margin: 0.5rem 1rem 1rem 1rem;
+  }
+  .rel {
+    text-align: center;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    padding: 0.4rem 0.5rem;
+    border-top: 1px dashed var(--border);
+    position: relative;
+  }
+  .rel::before {
+    content: "";
+    position: absolute;
+    top: -5px; left: 50%;
+    width: 9px; height: 9px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* === Example chips === */
+  .examples {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+  .example-chip {
+    background: var(--cream-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    font-size: 0.875rem;
+  }
+  .example-chip .chip-flow {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .example-chip .chip-flow .b { color: var(--accent); font-weight: 700; }
+  .example-chip .chip-flow .a { color: var(--ink); font-weight: 600; }
+  .example-chip .chip-flow i { color: var(--muted); font-style: italic; font-weight: 400; padding: 0 0.35rem; }
+  .example-chip .ph { color: var(--muted); }
+
+  /* === Diagram 2: Many-to-many === */
+  .m2m {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-top: 1rem;
+  }
+  .m2m-card {
+    background: var(--cream-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+  }
+  .m2m-card h4 {
+    font-family: 'PP Telegraf', serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .m2m-card h4 i { color: var(--accent); }
+
+  .m2m-svg {
+    width: 100%;
+    height: 180px;
+    margin-top: 0.5rem;
+  }
+
+  /* === Diagram 3: Timeline === */
+  .timeline {
+    margin-top: 1.5rem;
+    background: var(--cream-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2rem 1.5rem 1.5rem 1.5rem;
+  }
+  .timeline-svg { width: 100%; height: 220px; }
+  .timeline-legend {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    margin-top: 1rem;
+    font-size: 0.825rem;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.5rem; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+  /* === Diagram 4: Deal flow === */
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+  }
+  .flow-step {
+    background: var(--cream-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1rem;
+    position: relative;
+    text-align: center;
+  }
+  .flow-step .step-num {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+  .flow-step .step-title {
+    font-family: 'PP Telegraf', serif;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 0.4rem;
+  }
+  .flow-step .step-desc {
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .flow-step:not(:last-child)::after {
+    content: "›";
+    position: absolute;
+    right: -0.55rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.5rem;
+    color: var(--border);
+    font-family: 'PP Telegraf', serif;
+    z-index: 1;
+    background: var(--white);
+    width: 1.2rem;
+    text-align: center;
+  }
+
+  /* === CRM model footer === */
+  .model-note {
+    background: var(--ink);
+    color: var(--white);
+    border-radius: 8px;
+    padding: 2rem 2.5rem;
+    margin-top: 2rem;
+  }
+  .model-note .eyebrow { color: var(--accent); margin-bottom: 0.5rem; }
+  .model-note h3 {
+    font-family: 'PP Telegraf', serif;
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+  .model-note ul {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem 2rem;
+  }
+  .model-note li {
+    font-size: 0.9rem;
+    color: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    line-height: 1.5;
+  }
+  .model-note li i { color: var(--green); margin-top: 0.15rem; flex-shrink: 0; }
+  .model-note li strong { color: var(--white); }
+
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="eyebrow">Plex × Dreamteam · Use Case Map</div>
+  <h1>How a Plex ad deal actually flows.</h1>
+  <p class="lede">Four parties, two date dimensions, one pilot. The play between Advertiser, Brand, Agency and Plex — and what the CRM has to model to make it work.</p>
+
+  <!-- =================== PANEL 1: Four-party model =================== -->
+  <div class="panel">
+    <h2><span class="num">01 · ENTITY MODEL</span>The four parties</h2>
+    <p class="intro">Plex sells the inventory. The Agency holds the budget relationship and signs the IO. The Brand is what gets advertised. The Advertiser is the legal entity that owns the brand (often a holdco that owns several).</p>
+
+    <div class="diagram-entities">
+      <div class="entity">
+        <div class="entity-icon"><i class="ph ph-buildings"></i></div>
+        <div class="entity-label">Owns the budget</div>
+        <div class="entity-role">Advertiser</div>
+        <div class="entity-eg">Parent / holding company. e.g. PepsiCo, IAC.</div>
+      </div>
+      <div class="entity">
+        <div class="entity-icon"><i class="ph ph-tag"></i></div>
+        <div class="entity-label">What's advertised</div>
+        <div class="entity-role">Brand</div>
+        <div class="entity-eg">The product on screen. e.g. Pepsi, Doordash, AMC.</div>
+      </div>
+      <div class="entity">
+        <div class="entity-icon"><i class="ph ph-handshake"></i></div>
+        <div class="entity-label">Plans &amp; buys media</div>
+        <div class="entity-role">Agency</div>
+        <div class="entity-eg">Activates the campaign on behalf of the brand. e.g. WPP, Horizon Media.</div>
+      </div>
+      <div class="entity plex">
+        <div class="entity-icon"><i class="ph ph-broadcast"></i></div>
+        <div class="entity-label">The publisher</div>
+        <div class="entity-role">Plex</div>
+        <div class="entity-eg">Sells premium inventory on Plex App. 40–50M visitors.</div>
+      </div>
+    </div>
+
+    <div class="relationships">
+      <div class="rel">owns / parents</div>
+      <div class="rel">repped by</div>
+      <div class="rel">buys inventory from</div>
+    </div>
+
+    <div class="examples">
+      <div class="example-chip">
+        <i class="ph ph-film-strip"></i>
+        <div class="chip-flow"><span class="b">AMC</span> <i>repped by</i> <span class="a">WPP</span> <i>buys from</i> <span class="a">Plex</span></div>
+      </div>
+      <div class="example-chip">
+        <i class="ph ph-bowl-food"></i>
+        <div class="chip-flow"><span class="b">Pepsi, Doordash</span> <i>repped by</i> <span class="a">Horizon</span> <i>buys from</i> <span class="a">Plex</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== PANEL 2: Many-to-many =================== -->
+  <div class="panel">
+    <h2><span class="num">02 · THE WIRING</span>It's many-to-many on both sides</h2>
+    <p class="intro">A brand can be repped by multiple agencies simultaneously — different media disciplines or different geographies. An agency reps a portfolio of brands. The CRM has to label every one of these edges with a role.</p>
+
+    <div class="m2m">
+      <div class="m2m-card">
+        <h4><i class="ph ph-arrow-right"></i>One brand → many agencies</h4>
+        <svg class="m2m-svg" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
+          <!-- Brand node -->
+          <rect x="20" y="70" width="100" height="40" rx="6" fill="#1a1a1a"/>
+          <text x="70" y="95" text-anchor="middle" fill="#fff" font-family="PP Telegraf, serif" font-size="13" font-weight="600">Pepsi</text>
+          <!-- Lines -->
+          <line x1="120" y1="78" x2="240" y2="30" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <line x1="120" y1="90" x2="240" y2="90" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <line x1="120" y1="102" x2="240" y2="150" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <!-- Agency nodes -->
+          <rect x="240" y="10" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="28" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">Horizon</text>
+          <text x="295" y="42" text-anchor="middle" fill="#6b6b6b" font-family="Inter, sans-serif" font-size="9">media buying</text>
+          <rect x="240" y="70" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="88" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">BBDO</text>
+          <text x="295" y="102" text-anchor="middle" fill="#6b6b6b" font-family="Inter, sans-serif" font-size="9">creative</text>
+          <rect x="240" y="130" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="148" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">OMD EMEA</text>
+          <text x="295" y="162" text-anchor="middle" fill="#6b6b6b" font-family="Inter, sans-serif" font-size="9">EU buying</text>
+        </svg>
+      </div>
+
+      <div class="m2m-card">
+        <h4><i class="ph ph-arrow-left"></i>One agency → many brands</h4>
+        <svg class="m2m-svg" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg">
+          <!-- Agency node -->
+          <rect x="20" y="70" width="100" height="40" rx="6" fill="#1a1a1a"/>
+          <text x="70" y="95" text-anchor="middle" fill="#fff" font-family="PP Telegraf, serif" font-size="13" font-weight="600">Horizon</text>
+          <!-- Lines -->
+          <line x1="120" y1="78" x2="240" y2="30" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <line x1="120" y1="90" x2="240" y2="90" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <line x1="120" y1="102" x2="240" y2="150" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3,3"/>
+          <!-- Brand nodes -->
+          <rect x="240" y="10" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="35" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">Pepsi</text>
+          <rect x="240" y="70" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="95" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">Doordash</text>
+          <rect x="240" y="130" width="110" height="40" rx="6" fill="#f5f0e8" stroke="#d8d0c4"/>
+          <text x="295" y="155" text-anchor="middle" fill="#1a1a1a" font-family="PP Telegraf, serif" font-size="12" font-weight="600">Geico</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== PANEL 3: The two-date problem =================== -->
+  <div class="panel">
+    <h2><span class="num">03 · THE TWO-DATE PROBLEM</span>Close date ≠ revenue date</h2>
+    <p class="intro">An IO can close in May but the ads might not run until Q4. Forecasting on close date will lie about both quarters. The CRM has to carry deal-close + flight-start + flight-end and split revenue across the flight window.</p>
+
+    <div class="timeline">
+      <svg class="timeline-svg" viewBox="0 0 1000 220" xmlns="http://www.w3.org/2000/svg">
+        <!-- Baseline -->
+        <line x1="50" y1="140" x2="950" y2="140" stroke="#d8d0c4" stroke-width="1.5"/>
+        <!-- Quarter ticks -->
+        <g font-family="Inter, sans-serif" font-size="11" fill="#6b6b6b" text-anchor="middle">
+          <line x1="100" y1="135" x2="100" y2="145" stroke="#6b6b6b"/>
+          <text x="100" y="165">Q2 2026</text>
+          <line x1="325" y1="135" x2="325" y2="145" stroke="#6b6b6b"/>
+          <text x="325" y="165">Q3 2026</text>
+          <line x1="550" y1="135" x2="550" y2="145" stroke="#6b6b6b"/>
+          <text x="550" y="165">Q4 2026</text>
+          <line x1="775" y1="135" x2="775" y2="145" stroke="#6b6b6b"/>
+          <text x="775" y="165">Q1 2027</text>
+          <line x1="950" y1="135" x2="950" y2="145" stroke="#6b6b6b"/>
+        </g>
+
+        <!-- Close date marker (Q2) -->
+        <circle cx="180" cy="140" r="9" fill="#1a1a1a"/>
+        <line x1="180" y1="140" x2="180" y2="55" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <rect x="115" y="20" width="130" height="35" rx="6" fill="#1a1a1a"/>
+        <text x="180" y="35" text-anchor="middle" fill="#ffffff" font-family="Inter, sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">CLOSE DATE</text>
+        <text x="180" y="49" text-anchor="middle" fill="#ffffff" font-family="Inter, sans-serif" font-size="10">May 28, 2026</text>
+
+        <!-- Flight window (Q3 mid → Q4 mid) -->
+        <rect x="425" y="100" width="270" height="40" rx="6" fill="#c0392b" fill-opacity="0.18" stroke="#c0392b" stroke-width="1.5"/>
+        <circle cx="425" cy="120" r="7" fill="#c0392b"/>
+        <circle cx="695" cy="120" r="7" fill="#c0392b"/>
+        <text x="560" y="125" text-anchor="middle" font-family="PP Telegraf, serif" font-size="12" font-weight="600" fill="#c0392b">FLIGHT WINDOW</text>
+        <text x="425" y="92" text-anchor="middle" fill="#3d3d3d" font-family="Inter, sans-serif" font-size="10">flight start</text>
+        <text x="695" y="92" text-anchor="middle" fill="#3d3d3d" font-family="Inter, sans-serif" font-size="10">flight end</text>
+
+        <!-- Revenue split lines below -->
+        <text x="50" y="195" font-family="Inter, sans-serif" font-size="10" font-weight="700" letter-spacing="0.05em" fill="#6b6b6b">REVENUE RECOGNIZED</text>
+        <rect x="225" y="183" width="200" height="14" fill="#ede7d9" stroke="#d8d0c4"/>
+        <text x="325" y="194" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" fill="#6b6b6b">$0 in Q3 → 0%</text>
+        <rect x="425" y="183" width="125" height="14" fill="#6bcb77" fill-opacity="0.5" stroke="#6bcb77"/>
+        <text x="487" y="194" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" fill="#1a1a1a" font-weight="600">~40%</text>
+        <rect x="550" y="183" width="145" height="14" fill="#6bcb77" fill-opacity="0.5" stroke="#6bcb77"/>
+        <text x="622" y="194" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" fill="#1a1a1a" font-weight="600">~60%</text>
+      </svg>
+
+      <div class="timeline-legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#1a1a1a"></span>Deal close — paper signed, $0 revenue yet</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#c0392b"></span>Flight — campaign actually runs</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#6bcb77"></span>Revenue — recognized across flight quarters</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== PANEL 4: Deal flow =================== -->
+  <div class="panel">
+    <h2><span class="num">04 · DEAL FLOW</span>From prospect to recognized revenue</h2>
+    <p class="intro">~12 deals per cycle. Premium direct IO only — programmatic, content distribution, and affiliate are explicitly out of scope for the pilot.</p>
+
+    <div class="flow">
+      <div class="flow-step">
+        <div class="step-num">01</div>
+        <div class="step-title">Prospect</div>
+        <div class="step-desc">Brandon's 3-person team works both sides — brand marketer and agency planner.</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">02</div>
+        <div class="step-title">Negotiate</div>
+        <div class="step-desc">Usually agency-led. Inventory, units, flight dates, rate.</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">03</div>
+        <div class="step-title">Paper</div>
+        <div class="step-desc">Direct IO template, or Ironclad for non-standard. Signed by the agency.</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">04</div>
+        <div class="step-title">Flight</div>
+        <div class="step-desc">Ads run. 2 weeks to 1 quarter. Homepage takeovers are short + premium.</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num">05</div>
+        <div class="step-title">Recognize</div>
+        <div class="step-desc">Revenue spread across flight window. Can be 1–3 quarters after close.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== Model note =================== -->
+  <div class="model-note">
+    <div class="eyebrow">WHAT THE CRM HAS TO MODEL</div>
+    <h3>The pilot data model in one screen</h3>
+    <ul>
+      <li><i class="ph ph-check-circle"></i><span><strong>Brand</strong> and <strong>Agency</strong> as distinct first-class company records.</span></li>
+      <li><i class="ph ph-check-circle"></i><span><strong>Brand ↔ Agency</strong> edge with a role label (media / creative / geo).</span></li>
+      <li><i class="ph ph-check-circle"></i><span><strong>Deal ↔ one Agency</strong> (paper-holder) and <strong>↔ one+ Brands</strong> (advertised).</span></li>
+      <li><i class="ph ph-check-circle"></i><span><strong>Flight</strong> as a child of Deal: start, end, line items, per-quarter revenue split.</span></li>
+      <li><i class="ph ph-check-circle"></i><span><strong>Contacts</strong> threaded on both sides — agency planner + brand marketing owner.</span></li>
+      <li><i class="ph ph-check-circle"></i><span><strong>SKU tagging</strong> on line items so revenue rolls up to the advertiser holdco.</span></li>
+    </ul>
+  </div>
+
+  <footer>
+    <span>Plex, Inc. — May 2026 · Deal 1026113 · Negotiation</span>
+    <span>Dreamteam · use-case map · 2026-05-29</span>
+  </footer>
+
+</div>
+</body>
+</html>
