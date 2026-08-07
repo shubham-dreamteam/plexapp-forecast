@@ -1,7 +1,5 @@
 # Rebuild the PlexApp Revenue Forecast as a LIVE, SHAREABLE Claude Artifact (data via DreamTeam MCP)
 
----
-
 ## NON-NEGOTIABLE: the deliverable is a LIVE, SHARED ARTIFACT (not a static HTML file)
 
 - You **must** create the dashboard as a **Claude Artifact** (the interactive canvas panel) and **publish/share it** so it produces a **shareable link that can be sent to customers**.
