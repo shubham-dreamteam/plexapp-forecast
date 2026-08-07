@@ -38,6 +38,16 @@ The original fetches `/api/forecast` from a server that runs `forecast.js` to bu
 6. **Publish the Artifact and enable link-sharing** so customers can open it. Give the user the shareable link. Keep it live.
 7. Show an "as of <date, time>" stamp on the page so data freshness is obvious. If the artifact runtime supports live/connected data (per `artifact-capabilities`), prefer letting the page refresh itself; otherwise the schedule in Step 2 keeps it current.
 
+### Drop any control that only worked by calling the server API
+
+The original talked to a live CRM API for some controls. There is no server or API in the Artifact (data is baked from MCP and refreshed on schedule), so **do not include** these:
+
+- **No "History" button and no historical / trend / "attainment over time" view.** That relied on API calls we are not using. Omit it entirely; do not add one even if it seems natural.
+- **Remove the "Refresh" button** (it fetched `/api/forecast`). Manual refresh does nothing in the Artifact; freshness comes from the scheduled refresh in Step 2.
+- More generally, **no button, link, or code path may call an HTTP/REST API** at runtime. If a control cannot work without the API, drop it rather than leave it dead or broken.
+
+Everything else is reproduced exactly.
+
 ## STEP 2. Keep the Artifact auto-refreshed on a schedule (required)
 
 Once the Artifact is live, correct, and shared, **set up a recurring scheduled task / automation** so it stays up to date automatically, with no manual re-run:
@@ -53,6 +63,7 @@ Once the Artifact is live, correct, and shared, **set up a recurring scheduled t
 - Reproduce the UI exactly: same look, feel, branding, components, animations.
 - **Live MCP data only.** No mock, placeholder, or hardcoded numbers.
 - **No auth or login** of any kind.
+- **No History button and no API-dependent controls.** The CRM API is not used here; data comes from MCP and the scheduled refresh. Remove the Refresh button too.
 - **Auto-refresh on the agreed schedule** (default 7:00 PM daily), always updating the same Artifact.
 - Honest empty states where the CRM genuinely lacks data (for example, no quota or target, so do not fake attainment).
 - If the MCP is not connected, stop and ask the user to connect it (Step 0).
