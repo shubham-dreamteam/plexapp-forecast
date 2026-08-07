@@ -1,7 +1,5 @@
 # Rebuild the PlexApp Revenue Forecast as a LIVE, SHAREABLE Claude Artifact (data via DreamTeam MCP)
 
-> **How to use:** paste this whole file into Claude (Cowork). It reproduces the existing dashboard exactly (same UI, branding, components, layout, colors, fonts, animations) and delivers it **as a live, shareable Claude Artifact** (not a static HTML page). The only data difference is that it reads from the **DreamTeam CRM via MCP** instead of a server API, and it **auto-refreshes on a schedule** so the numbers stay current. This is a reproduction task, not a redesign.
-
 ---
 
 ## NON-NEGOTIABLE: the deliverable is a LIVE, SHARED ARTIFACT (not a static HTML file)
