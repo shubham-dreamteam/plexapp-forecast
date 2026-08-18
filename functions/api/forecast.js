@@ -67,7 +67,11 @@ async function fetchAll(type, KEY) {
 async function fetchStages(KEY) {
   const recs = await fetchAll('stage', KEY);
   const map = {};
-  for (const s of recs) map[s.id] = { name: s.properties && s.properties.name, isClosed: !!(s.properties && s.properties.is_closed) };
+  for (const s of recs) map[s.id] = {
+    name: s.properties && s.properties.name,
+    isClosed: !!(s.properties && s.properties.is_closed),
+    winProbability: s.properties ? s.properties.win_probability : null,
+  };
   return map;
 }
 
@@ -92,7 +96,9 @@ async function fetchUsers(KEY) {
 function normalize(rec, stagesMap, usersMap) {
   const p = { ...(rec.properties || {}) };
   if (p.stage_id != null && stagesMap[p.stage_id]) {
-    p.stage_id = [{ id: rec.properties.stage_id, name: stagesMap[rec.properties.stage_id].name }];
+    const st = stagesMap[rec.properties.stage_id];
+    p.stage_win_probability = st.winProbability;   // probability now lives on the STAGE
+    p.stage_id = [{ id: rec.properties.stage_id, name: st.name }];
   }
   if (p.owner_id != null) {
     const u = usersMap[p.owner_id];
@@ -108,11 +114,14 @@ function sv(d, k) {                       // scalar value; unwrap [{name}] looku
   return v;
 }
 const amt  = (d) => (d.data && d.data.amount) || 0;
-// win_probability is the authoritative field; fall back to probability, then 0
+// The CRM now stores win probability on the STAGE (Discovery/Pitch 10, Media
+// Plan/Proposal 25, IO/Contract 90, Closed Won 100, Closed Lost 0, etc.), so the
+// stage's win_probability is authoritative. Fall back to any deal-level value, then 0.
 const prob = (d) => {
+  const sp = d.data && d.data.stage_win_probability;
   const wp = d.data && d.data.win_probability;
   const p  = d.data && d.data.probability;
-  return (wp != null ? wp : (p != null ? p : 0)) || 0;
+  return (sp != null ? sp : (wp != null ? wp : (p != null ? p : 0))) || 0;
 };
 const wtd  = (d) => amt(d) * prob(d) / 100;   // V = amount × win_probability / 100
 
@@ -240,10 +249,17 @@ function aggregate(deals, companies = [], contacts = []) {
 
   const weighted  = OPEN.reduce((s, d) => s + wtd(d), 0);
   const pipeline  = OPEN.reduce((s, d) => s + amt(d), 0);
-  const commitDeals = OPEN.filter(d => prob(d) >= 80);
+  // Commit = high-confidence OPEN deals (>= 80%) PLUS already-won (Closed Won) deals.
+  const wonDeals   = deals.filter(d => sv(d, 'stage_id') === 'Closed Won');
+  const wonAmt     = wonDeals.reduce((s, d) => s + amt(d), 0);
+  const wonW       = wonDeals.reduce((s, d) => s + wtd(d), 0);   // won at 100% = full amount
+  const commitOpen = OPEN.filter(d => prob(d) >= 80);
+  const commitDeals = [...commitOpen, ...wonDeals];
   const commitAmt = commitDeals.reduce((s, d) => s + amt(d), 0);
   const commitW   = commitDeals.reduce((s, d) => s + wtd(d), 0);
-  const commitRate = weighted ? round(commitW / weighted * 100) : 0;
+  // Commit as a share of total forecast (open weighted + won), so it stays <= 100%.
+  const totalForecast = weighted + wonW;
+  const commitRate = totalForecast ? round(commitW / totalForecast * 100) : 0;
   const weightedPct = pipeline ? round(weighted / pipeline * 100) : 0;
   const noValueCount = OPEN.filter(d => !amt(d)).length;
 
@@ -321,14 +337,14 @@ function aggregate(deals, companies = [], contacts = []) {
     {
       tone: 'plain', icon: 'spark',
       title: `${peakQ.q} carries ${peakShare}% of the weighted pipeline`,
-      body: `<b class="hl">${money(peakQ.total)}</b> of the ${money(weighted)} weighted forecast closes in ${peakQ.q}. Commit-level deals add <b class="hl">${money(commitAmt)}</b> of high-confidence pipeline.`,
+      body: `<b class="hl">${money(peakQ.total)}</b> of the ${money(weighted)} weighted forecast closes in ${peakQ.q}. Commit (≥80% + closed-won) totals <b class="hl">${money(commitAmt)}</b>.`,
       calc: `${money(peakQ.total)} ÷ ${money(weighted)} = ${peakShare}%   ·   best-case upside = ${money(bestUpside)}`,
     },
     {
       tone: 'good', icon: 'target',
-      title: `${money(commitAmt)} in commit-level deals`,
-      body: `${commitDeals.length} deals at ≥ 80% probability carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the weighted forecast is in high-confidence pipeline.`,
-      calc: `${money(commitW)} weighted commit ÷ ${money(weighted)} = ${commitRate}%   ·   pipeline = ${money(pipeUpside)}`,
+      title: `${money(commitAmt)} committed (≥80% + won)`,
+      body: `${commitDeals.length} deals (${commitOpen.length} open at ≥ 80% plus ${wonDeals.length} closed-won) carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the total forecast is committed.`,
+      calc: `${money(commitW)} weighted commit ÷ ${money(totalForecast)} total forecast = ${commitRate}%   ·   won = ${money(wonAmt)}`,
     },
     {
       tone: 'flag', icon: 'alert',
@@ -412,7 +428,7 @@ function aggregate(deals, companies = [], contacts = []) {
     fy: 'FY2026', updated, unit: 'Ad Sales', live: true,
     kpis: {
       weighted: { value: round(weighted), label: 'Weighted forecast', sub: `of ${money(pipeline)} total pipeline`, accent: 'var(--accent)' },
-      commit:   { value: round(commitAmt), label: 'Commit (≥80%)', sub: `${commitDeals.length} deals · full amount at ≥ 80% probability`, accent: 'var(--c-commit)' },
+      commit:   { value: round(commitAmt), label: 'Commit', sub: `${commitDeals.length} deals · ${commitOpen.length} at ≥ 80% + ${wonDeals.length} closed-won`, accent: 'var(--c-commit)' },
       openPipe: { value: round(pipeline), label: 'Open pipeline', sub: `${OPEN.length} open deals`, accent: 'var(--c-pipe)' },
     },
     quarters, stages, partners, insights,
@@ -424,6 +440,9 @@ function aggregate(deals, companies = [], contacts = []) {
     totals: {
       unweighted: round(pipeline), weightedRaw: round(weighted), totalDeals: OPEN.length,
       commitAmount: round(commitAmt), commitWeighted: round(commitW), commitRate,
+      commitCount: commitDeals.length, commitOpenCount: commitOpen.length,
+      wonCount: wonDeals.length, wonAmount: round(wonAmt), wonWeighted: round(wonW),
+      totalForecast: round(totalForecast),
       top3Share, bestUpside, pipeUpside, weightedPct, knownWeighted,
       target: null,
     },

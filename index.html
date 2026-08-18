@@ -616,6 +616,8 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
     totals: {
       unweighted: unweightedTotal, weightedRaw: weightedTotal, totalDeals,
       commitAmount, commitWeighted, commitRate,
+      commitCount: 0, commitOpenCount: 0, wonCount: 0, wonAmount: 0, wonWeighted: 0,
+      totalForecast: weightedTotal,
       top3Share, bestUpside, pipeUpside, weightedPct,
       knownWeighted,
       target: null, // no quota in CRM
@@ -1010,7 +1012,7 @@ window.drillData = {
 // short payload builders so KPI click sites stay tiny
 window.kpiDrill = {
   weighted:  () => ({ eyebrow: 'Weighted forecast', title: 'Weighted forecast', subtitle: 'All open deals · amount × probability', deals: window.drillData.open() }),
-  commit:    () => ({ eyebrow: 'Commit', title: 'Commit (≥80%)', subtitle: 'Open deals at 80%+ probability', deals: window.drillData.tier('commit') }),
+  commit:    () => ({ eyebrow: 'Commit', title: 'Commit (≥80% + closed-won)', subtitle: 'Open deals at 80%+ probability, plus already-won deals', deals: [...window.drillData.tier('commit'), ...window.__deals().filter(d => d.status === 'Won')] }),
   pipeline:  () => ({ eyebrow: 'Open pipeline', title: 'Open pipeline', subtitle: 'All open deals · unweighted amount', deals: window.drillData.open() }),
   openDeals: () => ({ eyebrow: 'Open deals', title: 'Open deals', subtitle: 'Every open deal in the CRM', deals: window.drillData.open() }),
   lost:      () => ({ eyebrow: 'Closed lost', title: 'Closed-lost deals', subtitle: 'Excluded from the forecast', deals: window.drillData.lost() }),
@@ -1516,7 +1518,7 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           value={full ? fmt.money(D.totals.unweighted) : fmt.money(D.totals.weightedRaw)}
           sub={full ? `weighted call ${fmt.money(D.totals.weightedRaw)}` : `of ${fmt.money(D.totals.unweighted)} total pipeline`}
           onClick={() => window.openDrill(full ? window.kpiDrill.pipeline() : window.kpiDrill.weighted())} />
-        <KpiCard label="COMMIT (≥80%)" accent="var(--c-commit)" value={fmt.money(D.totals.commitAmount)} sub={D.kpis.commit.sub}
+        <KpiCard label="COMMIT" accent="var(--c-commit)" value={fmt.money(D.totals.commitAmount)} sub={D.kpis.commit.sub}
           onClick={() => window.openDrill(window.kpiDrill.commit())} />
         <KpiCard label="OPEN PIPELINE" accent="var(--c-pipe)" value={fmt.money(D.totals.unweighted)} sub={D.kpis.openPipe.sub}
           onClick={() => window.openDrill(window.kpiDrill.pipeline())} />
@@ -1555,14 +1557,14 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           </div>
         </Panel>
 
-        <Panel title="Commit rate" sub="Weighted commit as % of total weighted forecast" style={{ display: 'flex', flexDirection: 'column' }}>
+        <Panel title="Commit rate" sub="Committed (≥80% + closed-won) as % of total forecast" style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <CoverageGauge value={D.totals.commitRate} max={100} unit="%" gaugeLabel="commit rate"
               label="Weighted commit" sublabel={fmt.money(D.totals.commitWeighted)}
-              subtext={`of ${fmt.money(D.totals.weightedRaw)} weighted`} />
+              subtext={`of ${fmt.money(D.totals.totalForecast)} total forecast`} />
             <div style={{ display: 'flex', gap: 18, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <div><div className="faint" style={{ fontSize: 11.5 }}>DEALS AT ≥80%</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-commit)' }}>5</div></div>
-              <div><div className="faint" style={{ fontSize: 11.5 }}>COMMIT AMT</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{fmt.money(D.totals.commitAmount)}</div></div>
+              <div><div className="faint" style={{ fontSize: 11.5 }}>COMMIT DEALS</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-commit)' }}>{D.totals.commitCount}</div></div>
+              <div><div className="faint" style={{ fontSize: 11.5 }}>OF WHICH WON</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{D.totals.wonCount}</div></div>
             </div>
           </div>
         </Panel>
