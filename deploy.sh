@@ -4,6 +4,7 @@
 # - Deploys from a clean staging dir so the .dev.vars secret is never uploaded.
 # - Commits + pushes source to GitHub (the .dev.vars key is gitignored, stays local).
 set -euo pipefail
+export CLOUDFLARE_ACCOUNT_ID="f1a42e7359a370c2b754255c88bb2116"  # Shubham@dreamteam.co account (plexapp-forecast project)
 cd "$(dirname "$0")"
 
 MSG="${1:-Update dashboard}"
