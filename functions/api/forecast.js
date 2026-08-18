@@ -24,18 +24,22 @@ export async function onRequestGet(context) {
   try {
     // Lookups first — the CRM now returns bare IDs for stage_id / owner_id
     // (no longer enriched to [{name}]), so we resolve them ourselves.
-    const [stagesMap, usersMap] = await Promise.all([fetchStages(KEY), fetchUsers(KEY)]);
-    const [dealsRaw, companiesRaw, contactsRaw] = await Promise.all([
+    // Everything in parallel. Deals are required. Companies power the (secondary)
+    // Accounts page, so they're non-fatal. Contacts are only a headcount now, so fetch
+    // just the count (1 request, not ~19 pages) — that was the flaky part that 520'd
+    // and sank the whole forecast.
+    const [stagesMap, usersMap, dealsRaw, companiesRaw, contactsTotal] = await Promise.all([
+      fetchStages(KEY),
+      fetchUsers(KEY),
       fetchAll('deal', KEY),
-      fetchAll('company', KEY),
-      fetchAll('contact', KEY),
+      safeFetchAll('company', KEY),
+      fetchCount('contact', KEY),
     ]);
     // Normalize the new API shape back into { id, data } with enriched lookups
     // so the aggregation below is unchanged.
     const deals = dealsRaw.map(r => normalize(r, stagesMap, usersMap));
     const companies = companiesRaw.map(r => normalize(r, stagesMap, usersMap));
-    const contacts = contactsRaw.map(r => normalize(r, stagesMap, usersMap));
-    const data = aggregate(deals, companies, contacts);
+    const data = aggregate(deals, companies, contactsTotal);
     // Cache at the edge for 60s so a flurry of refreshes doesn't hammer the CRM,
     // but the button still feels live.
     return json(data, 200, { 'Cache-Control': 'public, max-age=60' });
@@ -47,20 +51,51 @@ export async function onRequestGet(context) {
 /* ---- CRM access (GET + pagination only) ----
    The CRM API is 1-based paginated and returns { results, metadata } where
    metadata.has_next signals more pages. Each record is { id, properties }. */
-async function fetchAll(type, KEY) {
+
+// GET one URL as JSON, retrying transient errors (5xx / 429 / network) with backoff.
+async function crmFetch(url, KEY, attempts = 4) {
   const headers = { 'x-api-key': KEY, 'Origin': TENANT_ORIGIN };
-  const out = [];
-  let page = 1;
-  for (let i = 0; i < 100; i++) {               // hard cap as a safety backstop
-    const url = `${CRM_BASE}/api/v1/objects/${type}/records?page=${page}&size=200`;
-    const r = await fetch(url, { headers });
-    if (!r.ok) throw new Error(`CRM responded ${r.status} on ${type} page ${page}`);
-    const body = await r.json();
-    out.push(...(body.results || []));
-    if (!(body.metadata && body.metadata.has_next)) break;
-    page += 1;
+  let lastErr;
+  for (let a = 0; a < attempts; a++) {
+    try {
+      const r = await fetch(url, { headers });
+      if (r.ok) return await r.json();
+      if (r.status >= 500 || r.status === 429) lastErr = new Error(`CRM ${r.status}`); // transient → retry
+      else throw new Error(`CRM ${r.status} on ${url}`);                                // 4xx → give up
+    } catch (e) { lastErr = e; }
+    if (a < attempts - 1) await new Promise(res => setTimeout(res, 250 * (a + 1)));      // 250/500/750ms
+  }
+  throw lastErr || new Error('CRM fetch failed: ' + url);
+}
+
+async function fetchAll(type, KEY) {
+  const url = (p) => `${CRM_BASE}/api/v1/objects/${type}/records?page=${p}&size=200`;
+  // Fetch page 1 to learn the page count, then pull the rest in PARALLEL (the CRM
+  // caps page size ~20, so this turns 8 sequential round-trips into ~2).
+  const first = await crmFetch(url(1), KEY);
+  const out = [...(first.results || [])];
+  const totalPages = Math.min((first.metadata && first.metadata.total_pages) || 1, 100);
+  if (totalPages > 1) {
+    const rest = [];
+    for (let p = 2; p <= totalPages; p++) rest.push(p);
+    const bodies = await Promise.all(rest.map(p => crmFetch(url(p), KEY)));
+    for (const b of bodies) out.push(...(b.results || []));
   }
   return out;
+}
+
+// Like fetchAll but never throws — returns [] if the object can't be loaded.
+// Used for non-critical data (companies) so a flaky endpoint can't sink the forecast.
+async function safeFetchAll(type, KEY) {
+  try { return await fetchAll(type, KEY); } catch (e) { return []; }
+}
+
+// Cheap headcount for an object (one request, reads metadata.total_elements). Non-fatal.
+async function fetchCount(type, KEY) {
+  try {
+    const b = await crmFetch(`${CRM_BASE}/api/v1/objects/${type}/records?page=1&size=200`, KEY);
+    return (b.metadata && b.metadata.total_elements) || 0;
+  } catch (e) { return 0; }
 }
 
 // id -> { name, isClosed } for every pipeline stage
@@ -77,13 +112,12 @@ async function fetchStages(KEY) {
 
 // id -> user record (for owner names). /api/v1/users has the same {results, metadata} shape.
 async function fetchUsers(KEY) {
-  const headers = { 'x-api-key': KEY, 'Origin': TENANT_ORIGIN };
   const map = {};
   let page = 1;
   for (let i = 0; i < 20; i++) {
-    const r = await fetch(`${CRM_BASE}/api/v1/users?page=${page}&size=200`, { headers });
-    if (!r.ok) break;
-    const body = await r.json();
+    let body;
+    try { body = await crmFetch(`${CRM_BASE}/api/v1/users?page=${page}&size=200`, KEY); }
+    catch (e) { break; }   // owner names are non-fatal; deals still render without them
     for (const u of (body.results || [])) map[u.id] = u;
     if (!(body.metadata && body.metadata.has_next)) break;
     page += 1;
@@ -243,7 +277,7 @@ const isOpen = (d) => !String(sv(d, 'stage_id') || '').startsWith('Closed');
 const titleCase = (s) => !s ? s : String(s).replace(/\[|\]/g, '').replace(/\b\w/g, c => c.toUpperCase());
 
 /* ---- the aggregation (1:1 port of the verified Python) ---- */
-function aggregate(deals, companies = [], contacts = []) {
+function aggregate(deals, companies = [], contactsTotal = 0) {
   const K = 1000, M = 1000000;
   const OPEN = deals.filter(isOpen);
 
@@ -385,19 +419,12 @@ function aggregate(deals, companies = [], contacts = []) {
     if (cid == null) continue;
     (byCompanyId[cid] ||= []).push(d);
   }
-  const contactCountByCompany = {};
-  for (const c of contacts) {
-    const links = (c.data && c.data.company_ids) || [];
-    for (const l of (Array.isArray(links) ? links : [])) {
-      if (l && l.id != null) contactCountByCompany[l.id] = (contactCountByCompany[l.id] || 0) + 1;
-    }
-  }
   const accountRows = companies.map(c => {
     const cd = c.data || {};
     const linked = byCompanyId[c.id] || [];
     const openLinked = linked.filter(isOpen);
     const loc = [cd.city, cd.state || cd.country].filter(Boolean).join(', ');
-    const contactsLinked = Array.isArray(cd.contact_ids) ? cd.contact_ids.length : (contactCountByCompany[c.id] || 0);
+    const contactsLinked = Array.isArray(cd.contact_ids) ? cd.contact_ids.length : 0;
     return {
       id: c.id,
       name: cd.name || '(unnamed account)',
@@ -416,7 +443,7 @@ function aggregate(deals, companies = [], contacts = []) {
   const accountsSummary = {
     total: companies.length,
     withDeals: accountRows.filter(a => a.deals > 0).length,
-    totalContacts: contacts.length,
+    totalContacts: contactsTotal,
   };
 
   const updated = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
