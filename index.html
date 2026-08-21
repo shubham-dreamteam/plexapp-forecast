@@ -1510,7 +1510,7 @@ const QUARTERS4 = ['Q1', 'Q2', 'Q3', 'Q4'];
      • FY scope: 'FY2026 only' (default) counts only revenue flighting inside
        calendar 2026 — deals running entirely in 2025/2027 are excluded, and
        straddling deals count only their in-year portion (matches the customer
-       file). '+ Carryover' folds pre-2026 revenue into Q1 and post-2026 into Q4.
+       file). 'All years' folds pre-2026 revenue into Q1 and post-2026 into Q4.
      • quarter focus narrows the headline numbers, tables, stages, partners and
        channels to that quarter (values prorated by flight-day overlap), while the
        quarterly chart keeps all four bars with the focused quarter marked.
@@ -1711,10 +1711,10 @@ function FyScopeToggle() {
   const f = React.useContext(FilterCtx);
   if (!f) return null;
   return (
-    <Segmented value={f.fyScope} options={['FY2026 only', '+ Carryover']} onChange={f.setFyScope}
+    <Segmented value={f.fyScope} options={['FY2026 only', 'All years']} onChange={f.setFyScope}
       titles={{
         'FY2026 only': 'Count only revenue that flights inside calendar 2026. Deals running entirely in 2025 or 2027 are excluded; straddling deals count their 2026 portion only.',
-        '+ Carryover': 'Also count out-of-year flights: revenue from before 2026 folds into Q1, revenue after 2026 folds into Q4.',
+        'All years': 'Count every deal regardless of flight year: revenue from before 2026 shows in Q1, revenue after 2026 shows in Q4.',
       }} />
   );
 }
@@ -2596,7 +2596,7 @@ function App() {
   const [quarter, setQuarter]     = useStateA('Full year');   // quarter focus
   const [stageScope, setStageScope] = useStateA('All stages'); // stage scope
   const [kind, setKind]           = useStateA('Both');        // business type
-  const [fyScope, setFyScope]     = useStateA('FY2026 only'); // FY scope: 'FY2026 only' | '+ Carryover'
+  const [fyScope, setFyScope]     = useStateA('FY2026 only'); // FY scope: 'FY2026 only' | 'All years'
   const [loading, setLoading]     = useStateA(false);
   const [, bump]                  = useStateA(0);   // forces re-render after live fetch
   const [drill, setDrill]         = useStateA(null); // active drill-down payload
@@ -2640,7 +2640,7 @@ function App() {
   const rawData = window.PLEX_RAW || window.PLEX_DATA;
   window.PLEX_DATA = buildView(rawData, {
     quarter, stageScope, kind,
-    carry: fyScope === '+ Carryover',
+    carry: fyScope === 'All years',
     includeWon: t.commitDef === 'open + won',
   });
 
