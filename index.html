@@ -446,9 +446,9 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 
 /* drill modal */
 .modal-overlay { position: fixed; inset: 0; z-index: 1000; background: color-mix(in srgb, #000 62%, transparent);
-  backdrop-filter: blur(3px); display: flex; align-items: flex-start; justify-content: center; padding: 7vh 20px 20px; animation: fadeIn .15s ease; }
+  backdrop-filter: blur(3px); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 24px 24px; animation: fadeIn .15s ease; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-.modal { width: 100%; max-width: 860px; max-height: 84vh; display: flex; flex-direction: column;
+.modal { width: 100%; max-width: 1240px; max-height: 92vh; display: flex; flex-direction: column;
   background: var(--card); border: 1px solid var(--border-2); border-radius: var(--r-lg);
   box-shadow: 0 30px 80px rgba(0,0,0,.55); animation: fadeUp .22s var(--ease) both; overflow: hidden; }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 16px; border-bottom: 1px solid var(--border); }
@@ -2163,11 +2163,11 @@ function SortableHead({ sortKey, label, cls, sort }) {
 /* Optional drill-table columns the viewer can add. Flight dates are always shown;
    these are the extras. The choice sticks (localStorage) across drills & visits. */
 const DRILL_OPT_COLS = [
-  { key: 'created', label: 'Created',        render: d => d.createdDate || '—' },
-  { key: 'partner', label: 'Partner agency', render: d => d.partner || '—' },
-  { key: 'owner',   label: 'Owner',          render: d => d.owner || '—' },
-  { key: 'channel', label: 'Channel',        render: d => d.channel || '—' },
-  { key: 'type',    label: 'Type',           render: d => d.dealType || '—' },
+  { key: 'created', label: 'Created',        sortKey: 'createdDate', render: d => d.createdDate || '—' },
+  { key: 'partner', label: 'Partner agency', sortKey: 'partner',     render: d => d.partner || '—' },
+  { key: 'owner',   label: 'Owner',          sortKey: 'owner',       render: d => d.owner || '—' },
+  { key: 'channel', label: 'Channel',        sortKey: 'channel',     render: d => d.channel || '—' },
+  { key: 'type',    label: 'Type',           sortKey: 'dealType',    render: d => d.dealType || '—' },
 ];
 
 function DrillModal({ drill, onClose }) {
@@ -2179,6 +2179,7 @@ function DrillModal({ drill, onClose }) {
     try { localStorage.setItem('plex_drill_cols', JSON.stringify(next)); } catch (e) {}
     return next;
   });
+  const sort = useSort('weighted', 'desc');
   React.useEffect(() => {
     if (!drill) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2188,7 +2189,7 @@ function DrillModal({ drill, onClose }) {
   }, [drill, onClose]);
   if (!drill) return null;
 
-  const deals = (drill.deals || []).slice().sort((a, b) => (b.weighted - a.weighted) || (b.amount - a.amount));
+  const deals = (drill.deals || []).slice().sort(sort.sorter);
   const sum = deals.reduce((a, d) => ({ amt: a.amt + (d.amount || 0), wtd: a.wtd + (d.weighted || 0) }), { amt: 0, wtd: 0 });
   const single = deals.length === 1 ? deals[0] : null;
   const active = DRILL_OPT_COLS.filter(c => cols.includes(c.key));
@@ -2225,10 +2226,15 @@ function DrillModal({ drill, onClose }) {
         <div className="modal-body">
           <table className="tbl">
             <thead><tr>
-              <th>Deal</th><th>Account</th><th>Stage</th>
-              <th className="r">Amount</th><th className="r">Win %</th><th className="r">Weighted</th>
-              <th>Close date</th><th>Flight</th>
-              {active.map(c => <th key={c.key}>{c.label}</th>)}
+              <SortableHead sortKey="name" label="Deal" sort={sort} />
+              <SortableHead sortKey="account" label="Account" sort={sort} />
+              <SortableHead sortKey="stage" label="Stage" sort={sort} />
+              <SortableHead sortKey="amount" label="Amount" cls="r" sort={sort} />
+              <SortableHead sortKey="probability" label="Win %" cls="r" sort={sort} />
+              <SortableHead sortKey="weighted" label="Weighted" cls="r" sort={sort} />
+              <SortableHead sortKey="closeDate" label="Close date" sort={sort} />
+              <SortableHead sortKey="flightStart" label="Flight" sort={sort} />
+              {active.map(c => <SortableHead key={c.key} sortKey={c.sortKey} label={c.label} sort={sort} />)}
             </tr></thead>
             <tbody>
               {deals.map(d => (
