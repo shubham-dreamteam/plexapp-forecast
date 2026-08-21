@@ -1019,7 +1019,9 @@ window.drillData = {
 // short payload builders so KPI click sites stay tiny
 window.kpiDrill = {
   weighted:  () => ({ eyebrow: 'Weighted forecast', title: 'Weighted forecast', subtitle: 'All open deals · amount × probability', deals: window.drillData.open() }),
-  commit:    () => ({ eyebrow: 'Commit', title: 'Commit (≥80% + closed-won)', subtitle: 'Open deals at 80%+ probability, plus already-won deals', deals: [...window.drillData.tier('commit'), ...window.__deals().filter(d => d.status === 'Won')] }),
+  commit:    () => (window.PLEX_DATA && window.PLEX_DATA.includeWon
+    ? { eyebrow: 'Commit', title: 'Commit (≥80% + closed-won)', subtitle: 'Open deals at 80%+ probability, plus already-won deals', deals: [...window.drillData.tier('commit'), ...window.__deals().filter(d => d.status === 'Won')] }
+    : { eyebrow: 'Commit', title: 'Commit (open deals ≥ 80%)', subtitle: 'Open deals at 80%+ probability — booked revenue counted separately', deals: window.drillData.tier('commit') }),
   pipeline:  () => ({ eyebrow: 'Open pipeline', title: 'Open pipeline', subtitle: 'All open deals · unweighted amount', deals: window.drillData.open() }),
   openDeals: () => ({ eyebrow: 'Open deals', title: 'Open deals', subtitle: 'Every open deal in the CRM', deals: window.drillData.open() }),
   lost:      () => ({ eyebrow: 'Closed lost', title: 'Closed-lost deals', subtitle: 'Excluded from the forecast', deals: window.drillData.lost() }),
@@ -1384,11 +1386,11 @@ function Dropdown({ value, options, onChange }) {
   );
 }
 
-function Segmented({ value, options, onChange }) {
+function Segmented({ value, options, onChange, titles }) {
   return (
     <div className="segmented">
       {options.map(o => (
-        <button key={o} className={o === value ? 'on' : ''} onClick={() => onChange(o)}>{o}</button>
+        <button key={o} className={o === value ? 'on' : ''} title={titles ? titles[o] : undefined} onClick={() => onChange(o)}>{o}</button>
       ))}
     </div>
   );
@@ -1502,12 +1504,17 @@ const { useState: useStateP } = React;
 const FilterCtx = React.createContext(null);
 const QUARTERS4 = ['Q1', 'Q2', 'Q3', 'Q4'];
 
-/* buildView(raw, {quarter, stageScope, kind}) — derives the rendered view from the
-   raw deal pool the proxy returns, applying the active filters:
+/* buildView(raw, {quarter, stageScope, kind, carry, includeWon}) — derives the
+   rendered view from the raw deal pool the proxy returns, applying the filters:
      • business type + stage scope filter the pool for every widget and page
+     • FY scope: 'FY2026 only' (default) counts only revenue flighting inside
+       calendar 2026 — deals running entirely in 2025/2027 are excluded, and
+       straddling deals count only their in-year portion (matches the customer
+       file). '+ Carryover' folds pre-2026 revenue into Q1 and post-2026 into Q4.
      • quarter focus narrows the headline numbers, tables, stages, partners and
        channels to that quarter (values prorated by flight-day overlap), while the
        quarterly chart keeps all four bars with the focused quarter marked.
+     • commit definition: 'open ≥80% only' (default) vs 'open + won'.
    Falls back to `raw` unchanged for the offline snapshot (no per-quarter alloc). */
 function buildView(raw, f) {
   const deals = raw && raw.deals;
@@ -1516,22 +1523,43 @@ function buildView(raw, f) {
   const quarter = f.quarter || 'Full year';
   const stageScope = f.stageScope || 'All stages';
   const kind = f.kind || 'Both';
+  const carry = !!f.carry;             // false = FY2026 only (default)
+  const includeWon = !!f.includeWon;   // commit definition
   const isFull = quarter === 'Full year';
   const nowQ = (raw.quarters.find(q => q.now) || {}).q;
   const M = 1e6, K = 1e3;
   const money = (n) => Math.abs(n) >= M ? '$' + (n / M).toFixed(2).replace(/\.?0+$/, '') + 'M' : '$' + Math.round(n / K) + 'K';
 
-  // 1) business-type + stage-scope — apply to the whole pool
+  // Effective per-quarter maps under the FY scope. Carryover folds the explicit
+  // pre/post buckets into Q1/Q4; FY-only drops them.
+  const effQ = (m) => {
+    m = m || {};
+    return carry
+      ? { Q1: (m.Q1 || 0) + (m.pre || 0), Q2: m.Q2 || 0, Q3: m.Q3 || 0, Q4: (m.Q4 || 0) + (m.post || 0) }
+      : { Q1: m.Q1 || 0, Q2: m.Q2 || 0, Q3: m.Q3 || 0, Q4: m.Q4 || 0 };
+  };
+  const sum4 = (m) => m.Q1 + m.Q2 + m.Q3 + m.Q4;
+
+  // 1) business-type + stage-scope + FY-scope — apply to the whole pool
   const passKind = d => kind === 'Both' || (d.dealType || 'New') === kind;
   const passStage = d => stageScope !== 'Qualified' || d.band !== 'Outreach' || !d.open;  // Qualified drops cold open Leads
-  const basePool = deals.filter(d => passKind(d) && passStage(d));
+  const passFY = d => carry || d.fyTouch !== false;   // FY-only: drop deals entirely outside 2026
+  const basePool = deals.filter(d => passKind(d) && passStage(d) && passFY(d))
+    .map(d => ({ ...d, _w: effQ(d.alloc), _a: effQ(d.amountAlloc) }));
 
-  // 2) quarter projection
-  const wOf = d => isFull ? d.weighted : ((d.alloc && d.alloc[quarter]) || 0);
-  const aOf = d => isFull ? d.amount   : ((d.amountAlloc && d.amountAlloc[quarter]) || 0);
-  const touches = d => isFull || ((d.alloc && d.alloc[quarter]) || (d.amountAlloc && d.amountAlloc[quarter]));
+  // 2) value projection. Deals with no dates at all allocate nowhere but still
+  // belong to the full-year totals (their alloc maps are all-zero).
+  const dateless = d => !d.flightStart && !d.closeDate;
+  const wOf = d => isFull ? (dateless(d) ? d.weighted : sum4(d._w)) : d._w[quarter];
+  const aOf = d => isFull ? (dateless(d) ? d.amount   : sum4(d._a)) : d._a[quarter];
+  const touches = d => isFull || d._w[quarter] || d._a[quarter];
   const scoped = basePool.filter(touches).map(d => ({ ...d, weighted: round(wOf(d)), amount: round(aOf(d)) }));
-  const dealSet = basePool.filter(touches);   // tables show the filtered set with original deal sizes
+  // tables/drills show the filtered set with original deal sizes but view-consistent quarter maps
+  const dealSet = basePool.filter(touches).map(d => {
+    const { _w, _a, ...rest } = d;
+    return { ...rest, alloc: { Q1: round(_w.Q1), Q2: round(_w.Q2), Q3: round(_w.Q3), Q4: round(_w.Q4) },
+             amountAlloc: { Q1: round(_a.Q1), Q2: round(_a.Q2), Q3: round(_a.Q3), Q4: round(_a.Q4) } };
+  });
 
   const OPEN = scoped.filter(d => d.open);
   const WON  = scoped.filter(d => d.status === 'Won');
@@ -1540,11 +1568,13 @@ function buildView(raw, f) {
   const wonAmt   = WON.reduce((s, d) => s + d.amount, 0);
   const wonW     = WON.reduce((s, d) => s + d.weighted, 0);
   const commitOpen = OPEN.filter(d => d.probability >= 80);
-  const commitDeals = [...commitOpen, ...WON];
+  const commitDeals = includeWon ? [...commitOpen, ...WON] : commitOpen;
   const commitAmt = commitDeals.reduce((s, d) => s + d.amount, 0);
   const commitW   = commitDeals.reduce((s, d) => s + d.weighted, 0);
   const totalForecast = weighted + wonW;
-  const commitRate = totalForecast ? round(commitW / totalForecast * 100) : 0;
+  const commitRate = includeWon
+    ? (totalForecast ? round(commitW / totalForecast * 100) : 0)
+    : (weighted ? round(commitW / weighted * 100) : 0);
   const weightedPct = pipeline ? round(weighted / pipeline * 100) : 0;
   const noValueCount = OPEN.filter(d => !d.amount).length;
 
@@ -1552,8 +1582,8 @@ function buildView(raw, f) {
   const qi = () => ({ commit: 0, best: 0, pipe: 0, won: 0 });
   const Q = { Q1: qi(), Q2: qi(), Q3: qi(), Q4: qi() };
   for (const d of basePool) {
-    if (d.open) { const t = d.tier || 'pipe'; for (const k of QUARTERS4) Q[k][t] += (d.alloc && d.alloc[k]) || 0; }
-    else if (d.status === 'Won') { for (const k of QUARTERS4) Q[k].won += (d.amountAlloc && d.amountAlloc[k]) || 0; }
+    if (d.open) { const t = d.tier || 'pipe'; for (const k of QUARTERS4) Q[k][t] += d._w[k]; }
+    else if (d.status === 'Won') { for (const k of QUARTERS4) Q[k].won += d._a[k]; }
   }
   const quarters = QUARTERS4.map(q => ({
     q, commit: round(Q[q].commit), best: round(Q[q].best), pipe: round(Q[q].pipe), won: round(Q[q].won),
@@ -1622,9 +1652,13 @@ function buildView(raw, f) {
     { tone: 'plain', icon: 'spark', title: `${peakQ.q} carries ${peakShare}% of the weighted pipeline`,
       body: `<b class="hl">${money(peakQ.total)}</b> of the weighted forecast closes in ${peakQ.q}. Commit (≥80% + won) totals <b class="hl">${money(commitAmt)}</b>.`,
       calc: `best-case upside = ${money(bestUpside)}   ·   early pipeline = ${money(pipeUpside)}` },
-    { tone: 'good', icon: 'target', title: `${money(commitAmt)} committed (≥80% + won)`,
-      body: `${commitDeals.length} deals (${commitOpen.length} open ≥ 80% + ${WON.length} won) carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the total forecast.`,
-      calc: `${money(commitW)} weighted commit ÷ ${money(totalForecast)} total = ${commitRate}%   ·   won = ${money(wonAmt)}` },
+    includeWon
+      ? { tone: 'good', icon: 'target', title: `${money(commitAmt)} committed (≥80% + won)`,
+          body: `${commitDeals.length} deals (${commitOpen.length} open ≥ 80% + ${WON.length} won) carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the total forecast.`,
+          calc: `${money(commitW)} weighted commit ÷ ${money(totalForecast)} total = ${commitRate}%   ·   won = ${money(wonAmt)}` }
+      : { tone: 'good', icon: 'target', title: `${money(commitAmt)} committed (open deals ≥ 80%)`,
+          body: `${commitOpen.length} open deals at ≥ 80% probability carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the weighted forecast. Booked revenue is counted separately.`,
+          calc: `${money(commitW)} weighted commit ÷ ${money(weighted)} weighted = ${commitRate}%   ·   booked (separate) = ${money(wonAmt)}` },
     { tone: 'flag', icon: 'alert', title: `${noValueCount} open deals have no dollar value`,
       body: `${noValueCount} of ${OPEN.length} open deals have no amount entered — invisible to the weighted forecast until priced.`,
       calc: `${noValueCount} ÷ ${OPEN.length} = ${OPEN.length ? round(noValueCount / OPEN.length * 100) : 0}% unpriced   ·   blended probability = ${weightedPct}%` },
@@ -1637,7 +1671,9 @@ function buildView(raw, f) {
   // 8) kpis + totals (scoped)
   const kpis = {
     weighted: { value: round(weighted), label: 'Weighted forecast', sub: `of ${money(pipeline)} ${isFull ? 'total' : quarter} pipeline`, accent: 'var(--accent)' },
-    commit:   { value: round(commitAmt), label: 'Commit', sub: `${commitOpen.length} open ≥ 80% + ${WON.length} won`, accent: 'var(--c-commit)' },
+    commit:   { value: round(commitAmt), label: 'Commit',
+      sub: includeWon ? `${commitOpen.length} open ≥ 80% + ${WON.length} won` : `${commitOpen.length} open deals at ≥ 80% probability`,
+      accent: 'var(--c-commit)' },
     openPipe: { value: round(pipeline), label: 'Open pipeline', sub: `${OPEN.length} open deals`, accent: 'var(--c-pipe)' },
     booked:   { value: round(wonAmt), label: 'Booked', sub: `${WON.length} closed-won deals`, accent: 'var(--c-won)' },
   };
@@ -1654,7 +1690,7 @@ function buildView(raw, f) {
   return {
     ...raw, deals: dealSet, kpis, quarters, stages, partners, insights,
     channelsOpen, channelsBooked, channelOrder, totals,
-    quarter, stageScope, kind, quarterScoped: !isFull,
+    quarter, stageScope, kind, quarterScoped: !isFull, carry, includeWon,
   };
 }
 
@@ -1667,6 +1703,19 @@ function FilterBar() {
       <Segmented value={f.quarter} options={['Full year', 'Q1', 'Q2', 'Q3', 'Q4']} onChange={f.setQuarter} />
       <Segmented value={f.stageScope} options={['All stages', 'Qualified']} onChange={f.setStageScope} />
     </React.Fragment>
+  );
+}
+
+// FY scope — which revenue counts toward FY2026. Sits next to the FY selector.
+function FyScopeToggle() {
+  const f = React.useContext(FilterCtx);
+  if (!f) return null;
+  return (
+    <Segmented value={f.fyScope} options={['FY2026 only', '+ Carryover']} onChange={f.setFyScope}
+      titles={{
+        'FY2026 only': 'Count only revenue that flights inside calendar 2026. Deals running entirely in 2025 or 2027 are excluded; straddling deals count their 2026 portion only.',
+        '+ Carryover': 'Also count out-of-year flights: revenue from before 2026 folds into Q1, revenue after 2026 folds into Q4.',
+      }} />
   );
 }
 
@@ -1686,6 +1735,7 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
         <FilterBar />
         {pipeline != null && <Dropdown value={pipeline} options={D.pipelines} onChange={setPipeline} />}
         {fy != null && <Dropdown value={fy} options={D.fyOptions} onChange={setFy} />}
+        <FyScopeToggle />
       </div>
     </div>
   );
@@ -2532,6 +2582,7 @@ const TWEAK_DEFAULTS = {
   chartStyle: 'columns',
   accent: '#e5a00d',
   glow: false,
+  commitDef: 'open ≥80% only',   // 'open ≥80% only' | 'open + won'
 };
 
 function App() {
@@ -2545,6 +2596,7 @@ function App() {
   const [quarter, setQuarter]     = useStateA('Full year');   // quarter focus
   const [stageScope, setStageScope] = useStateA('All stages'); // stage scope
   const [kind, setKind]           = useStateA('Both');        // business type
+  const [fyScope, setFyScope]     = useStateA('FY2026 only'); // FY scope: 'FY2026 only' | '+ Carryover'
   const [loading, setLoading]     = useStateA(false);
   const [, bump]                  = useStateA(0);   // forces re-render after live fetch
   const [drill, setDrill]         = useStateA(null); // active drill-down payload
@@ -2586,7 +2638,11 @@ function App() {
   // Derive the rendered view from the raw pool + active filters. Every page reads
   // window.PLEX_DATA, so this one line makes the filters apply everywhere at once.
   const rawData = window.PLEX_RAW || window.PLEX_DATA;
-  window.PLEX_DATA = buildView(rawData, { quarter, stageScope, kind });
+  window.PLEX_DATA = buildView(rawData, {
+    quarter, stageScope, kind,
+    carry: fyScope === '+ Carryover',
+    includeWon: t.commitDef === 'open + won',
+  });
 
   const pageProps = { lens, setLens, pipeline, setPipeline, fy, setFy, chartStyle: t.chartStyle };
   let view;
@@ -2598,7 +2654,7 @@ function App() {
   else                          view = <ComingPage id={page} {...pageProps} />;
 
   return (
-    <FilterCtx.Provider value={{ quarter, setQuarter, stageScope, setStageScope, kind, setKind }}>
+    <FilterCtx.Provider value={{ quarter, setQuarter, stageScope, setStageScope, kind, setKind, fyScope, setFyScope }}>
     <div className={`shell ${collapsed ? 'nav-collapsed' : ''}`}>
       <Sidebar page={page} setPage={setPage} collapsed={collapsed} />
       <div className="main">
@@ -2635,6 +2691,9 @@ function App() {
 
         <TweakSection label="Forecast chart" />
         <TweakRadio label="Style" value={t.chartStyle} options={['columns', 'area', 'stems']} onChange={v => setTweak('chartStyle', v)} />
+
+        <TweakSection label="Metrics" />
+        <TweakRadio label="Commit" value={t.commitDef} options={['open ≥80% only', 'open + won']} onChange={v => setTweak('commitDef', v)} />
       </TweaksPanel>
     </div>
     </FilterCtx.Provider>

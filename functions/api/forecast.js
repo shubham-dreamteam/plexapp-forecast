@@ -210,10 +210,13 @@ function qBounds(year, q) {                 // q in 1..4
   const sm = [0, 3, 6, 9][q - 1];
   return [new Date(Date.UTC(year, sm, 1)), new Date(Date.UTC(year, sm + 3, 0))];
 }
-// returns RAW (unrounded) { Q1..Q4 } weighted allocation for FY calendar quarters
+// returns RAW (unrounded) allocation for FY calendar quarters, PLUS explicit
+// `pre` / `post` buckets for revenue flighting before/after the FY. The client
+// decides whether to exclude those (FY-only view) or fold them into Q1/Q4
+// (carryover view) — nothing is silently folded here any more.
 function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
   const V = amount * p / 100;
-  const out = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 };
+  const out = { Q1: 0, Q2: 0, Q3: 0, Q4: 0, pre: 0, post: 0 };
   if (!V) return out;
   const fs = parseDate(fsRaw), fe = parseDate(feRaw), close = parseDate(closeRaw);
   // Fallback (no/invalid flight dates): the CRM has no per-quarter split field,
@@ -221,8 +224,9 @@ function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
   if (!fs || !fe || fe < fs) {
     if (close) {
       const cy = close.getUTCFullYear();
-      const key = cy > FY ? 'Q4' : (cy < FY ? 'Q1' : 'Q' + (Math.floor(close.getUTCMonth() / 3) + 1));
-      out[key] = V;
+      if (cy > FY) out.post = V;
+      else if (cy < FY) out.pre = V;
+      else out['Q' + (Math.floor(close.getUTCMonth() / 3) + 1)] = V;
     }
     return out;
   }
@@ -233,17 +237,16 @@ function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
       const o0 = fs > qs ? fs : qs, o1 = fe < qe ? fe : qe;
       const overlap = Math.max(0, Math.round((o1 - o0) / DAY) + 1);
       if (overlap) {
-        // quarters outside the FY roll to the nearest in-range quarter (pre→Q1, post→Q4)
-        const key = y === FY ? 'Q' + q : (y < FY ? 'Q1' : 'Q4');
+        const key = y === FY ? 'Q' + q : (y < FY ? 'pre' : 'post');
         out[key] += V * overlap / totalDays;
       }
     }
   }
   return out;
 }
-// round each quarter, then largest-remainder reconcile so Σ == round(V)
+// round each bucket, then largest-remainder reconcile so Σ == round(V)
 function reconcileAlloc(raw, V) {
-  const keys = ['Q1', 'Q2', 'Q3', 'Q4'];
+  const keys = ['Q1', 'Q2', 'Q3', 'Q4', 'pre', 'post'];
   const floored = {};
   let sum = 0;
   for (const k of keys) { floored[k] = Math.round(raw[k]); sum += floored[k]; }
@@ -273,6 +276,17 @@ function allocForWon(d) {
     allocateRaw(amt(d), 100, d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date),
     amt(d)
   );
+}
+
+// Does this deal's revenue window touch calendar-FY at all? Flight dates are
+// authoritative; close date is the fallback; no dates at all → keep (unknown).
+function touchesFY(d) {
+  const fs = parseDate(d.data && d.data.flight_start_date);
+  const fe = parseDate(d.data && d.data.flight_end_date);
+  if (fs && fe && fe >= fs) return fs.getUTCFullYear() <= FY && fe.getUTCFullYear() >= FY;
+  const c = parseDate(d.data && d.data.expected_close_date);
+  if (c) return c.getUTCFullYear() === FY;
+  return true;
 }
 
 function ownerName(d) {
@@ -476,6 +490,7 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       tier: open ? tier(d) : null,   // commit | best | pipe
       dealType: dealTypeOf(sv(d, 'stage_id')),   // New | Renewal (from stage)
       band: bandOf(sv(d, 'stage_id')),           // Outreach | Semi-qualified | Qualified
+      fyTouch: touchesFY(d),                     // revenue window touches calendar FY2026?
       alloc: open
         ? (allocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 })
         : (wonAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }),   // won: booked (weighted==amount) allocation
