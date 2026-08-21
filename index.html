@@ -1513,10 +1513,10 @@ const QUARTERS4 = ['Q1', 'Q2', 'Q3', 'Q4'];
 /* buildView(raw, {quarter, stageScope, kind, carry, includeWon}) — derives the
    rendered view from the raw deal pool the proxy returns, applying the filters:
      • business type + stage scope filter the pool for every widget and page
-     • FY scope: 'FY2026 only' (default) counts only revenue flighting inside
+     • FY scope: '2026 flights' (default) counts only revenue flighting inside
        calendar 2026 — deals running entirely in 2025/2027 are excluded, and
        straddling deals count only their in-year portion (matches the customer
-       file). 'All years' folds pre-2026 revenue into Q1 and post-2026 into Q4.
+       file). 'All flights' folds pre-2026 revenue into Q1 and post-2026 into Q4.
      • quarter focus narrows the headline numbers, tables, stages, partners and
        channels to that quarter (values prorated by flight-day overlap), while the
        quarterly chart keeps all four bars with the focused quarter marked.
@@ -1717,10 +1717,10 @@ function FyScopeToggle() {
   const f = React.useContext(FilterCtx);
   if (!f) return null;
   return (
-    <Segmented value={f.fyScope} options={['FY2026 only', 'All years']} onChange={f.setFyScope}
+    <Segmented value={f.fyScope} options={['2026 flights', 'All flights']} onChange={f.setFyScope}
       titles={{
-        'FY2026 only': 'Count only revenue that flights inside calendar 2026. Deals running entirely in 2025 or 2027 are excluded; straddling deals count their 2026 portion only.',
-        'All years': 'Count every deal regardless of flight year: revenue from before 2026 shows in Q1, revenue after 2026 shows in Q4.',
+        '2026 flights': 'Count only revenue from ad flights running inside calendar 2026. Flights entirely in 2025 or 2027 are excluded; straddling flights count their 2026 portion only.',
+        'All flights': 'Count every deal regardless of when its flight runs: 2025 flight revenue shows in Q1, 2027 flight revenue in Q4.',
       }} />
   );
 }
@@ -2615,7 +2615,7 @@ function App() {
   const [quarter, setQuarter]     = useStateA('Full year');   // quarter focus
   const [stageScope, setStageScope] = useStateA('All stages'); // stage scope
   const [kind, setKind]           = useStateA('Both');        // business type
-  const [fyScope, setFyScope]     = useStateA('FY2026 only'); // FY scope: 'FY2026 only' | 'All years'
+  const [fyScope, setFyScope]     = useStateA('2026 flights'); // FY scope: '2026 flights' | 'All flights'
   const [loading, setLoading]     = useStateA(false);
   // First paint is gated on the live fetch: until it settles we show a loading
   // screen, never the stale offline snapshot (that only appears, labeled, if the
@@ -2664,7 +2664,7 @@ function App() {
   const rawData = window.PLEX_RAW || window.PLEX_DATA;
   window.PLEX_DATA = buildView(rawData, {
     quarter, stageScope, kind,
-    carry: fyScope === 'All years',
+    carry: fyScope === 'All flights',
     includeWon: t.commitDef === 'open + won',
   });
 
