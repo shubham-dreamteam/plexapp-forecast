@@ -1495,6 +1495,181 @@ Object.assign(window, { PlexLogo, Icon, Sidebar, Topbar, Dropdown, Segmented, Kp
   <script type="text/babel">
 const { useState: useStateP } = React;
 
+/* ============================================================
+   Shared filters — business type (New/Renewal), quarter focus and stage scope.
+   These live in App and drive buildView(), so every page and widget reflects them.
+   ============================================================ */
+const FilterCtx = React.createContext(null);
+const QUARTERS4 = ['Q1', 'Q2', 'Q3', 'Q4'];
+
+/* buildView(raw, {quarter, stageScope, kind}) — derives the rendered view from the
+   raw deal pool the proxy returns, applying the active filters:
+     • business type + stage scope filter the pool for every widget and page
+     • quarter focus narrows the headline numbers, tables, stages, partners and
+       channels to that quarter (values prorated by flight-day overlap), while the
+       quarterly chart keeps all four bars with the focused quarter marked.
+   Falls back to `raw` unchanged for the offline snapshot (no per-quarter alloc). */
+function buildView(raw, f) {
+  const deals = raw && raw.deals;
+  if (!deals || !deals.length || !deals[0] || !deals[0].amountAlloc) return raw;  // offline snapshot
+  const round = Math.round;
+  const quarter = f.quarter || 'Full year';
+  const stageScope = f.stageScope || 'All stages';
+  const kind = f.kind || 'Both';
+  const isFull = quarter === 'Full year';
+  const nowQ = (raw.quarters.find(q => q.now) || {}).q;
+  const M = 1e6, K = 1e3;
+  const money = (n) => Math.abs(n) >= M ? '$' + (n / M).toFixed(2).replace(/\.?0+$/, '') + 'M' : '$' + Math.round(n / K) + 'K';
+
+  // 1) business-type + stage-scope — apply to the whole pool
+  const passKind = d => kind === 'Both' || (d.dealType || 'New') === kind;
+  const passStage = d => stageScope !== 'Qualified' || d.band !== 'Outreach' || !d.open;  // Qualified drops cold open Leads
+  const basePool = deals.filter(d => passKind(d) && passStage(d));
+
+  // 2) quarter projection
+  const wOf = d => isFull ? d.weighted : ((d.alloc && d.alloc[quarter]) || 0);
+  const aOf = d => isFull ? d.amount   : ((d.amountAlloc && d.amountAlloc[quarter]) || 0);
+  const touches = d => isFull || ((d.alloc && d.alloc[quarter]) || (d.amountAlloc && d.amountAlloc[quarter]));
+  const scoped = basePool.filter(touches).map(d => ({ ...d, weighted: round(wOf(d)), amount: round(aOf(d)) }));
+  const dealSet = basePool.filter(touches);   // tables show the filtered set with original deal sizes
+
+  const OPEN = scoped.filter(d => d.open);
+  const WON  = scoped.filter(d => d.status === 'Won');
+  const weighted = OPEN.reduce((s, d) => s + d.weighted, 0);
+  const pipeline = OPEN.reduce((s, d) => s + d.amount, 0);
+  const wonAmt   = WON.reduce((s, d) => s + d.amount, 0);
+  const wonW     = WON.reduce((s, d) => s + d.weighted, 0);
+  const commitOpen = OPEN.filter(d => d.probability >= 80);
+  const commitDeals = [...commitOpen, ...WON];
+  const commitAmt = commitDeals.reduce((s, d) => s + d.amount, 0);
+  const commitW   = commitDeals.reduce((s, d) => s + d.weighted, 0);
+  const totalForecast = weighted + wonW;
+  const commitRate = totalForecast ? round(commitW / totalForecast * 100) : 0;
+  const weightedPct = pipeline ? round(weighted / pipeline * 100) : 0;
+  const noValueCount = OPEN.filter(d => !d.amount).length;
+
+  // 3) quarterly chart — always the full four-quarter breakdown of the filtered pool
+  const qi = () => ({ commit: 0, best: 0, pipe: 0, won: 0 });
+  const Q = { Q1: qi(), Q2: qi(), Q3: qi(), Q4: qi() };
+  for (const d of basePool) {
+    if (d.open) { const t = d.tier || 'pipe'; for (const k of QUARTERS4) Q[k][t] += (d.alloc && d.alloc[k]) || 0; }
+    else if (d.status === 'Won') { for (const k of QUARTERS4) Q[k].won += (d.amountAlloc && d.amountAlloc[k]) || 0; }
+  }
+  const quarters = QUARTERS4.map(q => ({
+    q, commit: round(Q[q].commit), best: round(Q[q].best), pipe: round(Q[q].pipe), won: round(Q[q].won),
+    total: round(Q[q].commit + Q[q].best + Q[q].pipe),
+    ...(q === nowQ ? { now: true } : {}),
+    ...(!isFull && q === quarter ? { focus: true } : {}),
+  }));
+
+  // 4) stages (open, scoped)
+  const stageColor = { 'Media Plan/Proposal': 'var(--c-best)', 'IO/Contract': 'var(--c-commit)', 'Expected Renewal': 'var(--c-best)' };
+  const stageOrder = ['Lead', 'Discovery/Pitch', 'Media Plan/Proposal', 'Expected Renewal', 'IO/Contract'];
+  const stageAgg = {};
+  for (const d of OPEN) { const s = d.stage || 'Unknown'; (stageAgg[s] ||= { count: 0, weighted: 0, total: 0 }); stageAgg[s].count++; stageAgg[s].weighted += d.weighted; stageAgg[s].total += d.amount; }
+  const stages = Object.entries(stageAgg)
+    .sort((a, b) => { const ia = stageOrder.indexOf(a[0]), ib = stageOrder.indexOf(b[0]); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); })
+    .map(([name, v]) => ({ name, count: v.count, weighted: round(v.weighted), total: round(v.total), color: stageColor[name] || 'var(--c-pipe)' }));
+
+  // 5) partners (open, scoped) — top 5 + residual "Other"
+  const pAgg = {};
+  for (const d of OPEN) { const p = d.partner || 'Unassigned'; (pAgg[p] ||= { deals: 0, weighted: 0 }); pAgg[p].deals++; pAgg[p].weighted += d.weighted; }
+  const ranked = Object.entries(pAgg).map(([name, v]) => ({ name, deals: v.deals, weighted: round(v.weighted) })).sort((a, b) => b.weighted - a.weighted);
+  const top = ranked.filter(p => p.weighted > 0).slice(0, 5);
+  const knownWeighted = top.reduce((s, p) => s + p.weighted, 0);
+  const knownDeals = top.reduce((s, p) => s + p.deals, 0);
+  const residualDeals = OPEN.length - knownDeals;
+  const partners = residualDeals > 0
+    ? [...top, { name: 'Other partners', deals: residualDeals, weighted: Math.max(0, round(weighted) - knownWeighted), derived: true }]
+    : top;
+  const top3Share = weighted ? round(top.slice(0, 3).reduce((s, p) => s + p.weighted, 0) / weighted * 100) : 0;
+  const topPartner = top[0] || { name: '—', weighted: 0 };
+  const topShare = weighted ? round(topPartner.weighted / weighted * 100) : 0;
+  const bestUpside = round(OPEN.filter(d => d.tier === 'best').reduce((s, d) => s + d.weighted, 0));
+  const pipeUpside = round(OPEN.filter(d => d.tier === 'pipe').reduce((s, d) => s + d.weighted, 0));
+  const chartSum = quarters.reduce((s, q) => s + q.total, 0);
+  const peakQ = [...quarters].sort((a, b) => b.total - a.total)[0] || { q: '—', total: 0 };
+  const peakShare = chartSum ? round(peakQ.total / chartSum * 100) : 0;
+
+  // 6) sales channel
+  const channelOrder = raw.channelOrder || ['Direct Ad Sales', 'Channel Sales', 'Enhanced Affiliate'];
+  const channelMix = (pool, metric) => {
+    const agg = {};
+    for (const d of pool) {
+      const ch = d.channel || 'Unassigned';
+      (agg[ch] ||= { name: ch, deals: 0, value: 0, clients: {} });
+      agg[ch].deals++; agg[ch].value += metric(d);
+      const cn = d.partner || 'Unassigned';
+      (agg[ch].clients[cn] ||= { name: cn, deals: 0, value: 0 });
+      agg[ch].clients[cn].deals++; agg[ch].clients[cn].value += metric(d);
+    }
+    const ord = n => { const i = channelOrder.indexOf(n); return i < 0 ? 99 : i; };
+    return Object.entries(agg).map(([name, v]) => ({
+      name, deals: v.deals, value: round(v.value),
+      clients: Object.values(v.clients).map(x => ({ ...x, value: round(x.value) })).sort((a, b) => b.value - a.value || b.deals - a.deals || a.name.localeCompare(b.name)),
+    })).sort((a, b) => ord(a.name) - ord(b.name) || b.value - a.value);
+  };
+  const channelsOpen = channelMix(OPEN, d => d.weighted);
+  const channelsBooked = channelMix(WON, d => d.amount);
+
+  // 7) insights — recomputed so the shown math matches the filtered figures
+  const kindNote = kind === 'Both' ? '' : ` · ${kind.toLowerCase()} business only`;
+  const scopeNote = stageScope === 'Qualified' ? ' · qualified only' : '';
+  const insights = [
+    { tone: 'flag', icon: 'layers', title: `${topPartner.name} drives ${topShare}% of weighted revenue`,
+      body: `${topPartner.name} accounts for <b class="hl">${money(topPartner.weighted)}</b> of the ${money(weighted)} weighted forecast — high single-partner concentration.`,
+      calc: `${money(topPartner.weighted)} ÷ ${money(weighted)} = ${topShare}%   ·   top-3 share = ${top3Share}%` },
+    { tone: 'plain', icon: 'spark', title: `${peakQ.q} carries ${peakShare}% of the weighted pipeline`,
+      body: `<b class="hl">${money(peakQ.total)}</b> of the weighted forecast closes in ${peakQ.q}. Commit (≥80% + won) totals <b class="hl">${money(commitAmt)}</b>.`,
+      calc: `best-case upside = ${money(bestUpside)}   ·   early pipeline = ${money(pipeUpside)}` },
+    { tone: 'good', icon: 'target', title: `${money(commitAmt)} committed (≥80% + won)`,
+      body: `${commitDeals.length} deals (${commitOpen.length} open ≥ 80% + ${WON.length} won) carry <b class="hl">${money(commitAmt)}</b> — <b class="hl">${commitRate}%</b> of the total forecast.`,
+      calc: `${money(commitW)} weighted commit ÷ ${money(totalForecast)} total = ${commitRate}%   ·   won = ${money(wonAmt)}` },
+    { tone: 'flag', icon: 'alert', title: `${noValueCount} open deals have no dollar value`,
+      body: `${noValueCount} of ${OPEN.length} open deals have no amount entered — invisible to the weighted forecast until priced.`,
+      calc: `${noValueCount} ÷ ${OPEN.length} = ${OPEN.length ? round(noValueCount / OPEN.length * 100) : 0}% unpriced   ·   blended probability = ${weightedPct}%` },
+  ];
+  if (wonAmt > 0) insights.splice(2, 0, {
+    tone: 'good', icon: 'up', title: `${money(wonAmt)} booked${isFull ? ' in ' + raw.fy : ' in ' + quarter}`,
+    body: `${WON.length} closed-won deals recognise <b class="hl">${money(wonAmt)}</b> of booked revenue${kindNote}${scopeNote}. Booked sits outside the open forecast.`,
+    calc: `booked = ${money(wonAmt)}   ·   weighted + booked = ${money(weighted + wonAmt)}` });
+
+  // 8) kpis + totals (scoped)
+  const kpis = {
+    weighted: { value: round(weighted), label: 'Weighted forecast', sub: `of ${money(pipeline)} ${isFull ? 'total' : quarter} pipeline`, accent: 'var(--accent)' },
+    commit:   { value: round(commitAmt), label: 'Commit', sub: `${commitOpen.length} open ≥ 80% + ${WON.length} won`, accent: 'var(--c-commit)' },
+    openPipe: { value: round(pipeline), label: 'Open pipeline', sub: `${OPEN.length} open deals`, accent: 'var(--c-pipe)' },
+    booked:   { value: round(wonAmt), label: 'Booked', sub: `${WON.length} closed-won deals`, accent: 'var(--c-won)' },
+  };
+  const totals = {
+    ...raw.totals,
+    unweighted: round(pipeline), weightedRaw: round(weighted), totalDeals: OPEN.length,
+    commitAmount: round(commitAmt), commitWeighted: round(commitW), commitRate,
+    commitCount: commitDeals.length, commitOpenCount: commitOpen.length,
+    wonCount: WON.length, wonAmount: round(wonAmt), wonWeighted: round(wonW),
+    totalForecast: round(totalForecast), weightedPlusBooked: round(weighted + wonAmt),
+    top3Share, bestUpside, pipeUpside, weightedPct, knownWeighted,
+  };
+
+  return {
+    ...raw, deals: dealSet, kpis, quarters, stages, partners, insights,
+    channelsOpen, channelsBooked, channelOrder, totals,
+    quarter, stageScope, kind, quarterScoped: !isFull,
+  };
+}
+
+function FilterBar() {
+  const f = React.useContext(FilterCtx);
+  if (!f) return null;
+  return (
+    <React.Fragment>
+      <Segmented value={f.kind} options={['Both', 'New', 'Renewal']} onChange={f.setKind} />
+      <Segmented value={f.quarter} options={['Full year', 'Q1', 'Q2', 'Q3', 'Q4']} onChange={f.setQuarter} />
+      <Segmented value={f.stageScope} options={['All stages', 'Qualified']} onChange={f.setStageScope} />
+    </React.Fragment>
+  );
+}
+
 function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
   const D = window.PLEX_DATA;
   return (
@@ -1508,6 +1683,7 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
       </div>
       <div className="head-controls">
         {lens != null && <Segmented value={lens} options={['Weighted', 'Full pipeline']} onChange={setLens} />}
+        <FilterBar />
         {pipeline != null && <Dropdown value={pipeline} options={D.pipelines} onChange={setPipeline} />}
         {fy != null && <Dropdown value={fy} options={D.fyOptions} onChange={setFy} />}
       </div>
@@ -1626,9 +1802,11 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
   const metric = full ? 'total' : 'weighted';
   const T = D.totals;
   const g = useGoals('FY2026');
-  const fyTarget = g.fyTarget;
-  const attainment = fyTarget ? Math.round(T.wonAmount / fyTarget * 100) : null;
-  const gap = fyTarget ? Math.max(0, fyTarget - T.wonAmount) : null;
+  // Target follows the quarter focus: a single quarter's goal when focused, else the FY sum.
+  const scopedTarget = D.quarterScoped ? (g.goals[D.quarter] || 0) : g.fyTarget;
+  const targetLabel = D.quarterScoped ? `${D.quarter} goal` : 'FY goal';
+  const attainment = scopedTarget ? Math.round(T.wonAmount / scopedTarget * 100) : null;
+  const gap = scopedTarget ? Math.max(0, scopedTarget - T.wonAmount) : null;
   const coverage = (gap && gap > 0) ? Math.round(T.unweighted / gap * 10) / 10 : null;
   const chartQuarters = D.quarters.map(q => ({ ...q, target: g.goals[q.q] || 0 }));
 
@@ -1637,15 +1815,17 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
       {tip.node}
       <PageHead title="Revenue forecast" lens={lens} setLens={setLens} pipeline={pipeline} setPipeline={setPipeline} fy={fy} setFy={setFy} />
 
-      <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <KpiCard label="WEIGHTED FORECAST" accent="var(--accent)"
           value={full ? fmt.money(D.totals.unweighted) : fmt.money(D.totals.weightedRaw)}
-          sub={full ? `weighted call ${fmt.money(D.totals.weightedRaw)}` : `of ${fmt.money(D.totals.unweighted)} total pipeline`}
+          sub={full ? `weighted call ${fmt.money(D.totals.weightedRaw)}` : `of ${fmt.money(D.totals.unweighted)} ${D.quarterScoped ? D.quarter : 'total'} pipeline`}
           onClick={() => window.openDrill(full ? window.kpiDrill.pipeline() : window.kpiDrill.weighted())} />
         <KpiCard label="COMMIT" accent="var(--c-commit)" value={fmt.money(D.totals.commitAmount)} sub={D.kpis.commit.sub}
           onClick={() => window.openDrill(window.kpiDrill.commit())} />
         <KpiCard label="OPEN PIPELINE" accent="var(--c-pipe)" value={fmt.money(D.totals.unweighted)} sub={D.kpis.openPipe.sub}
           onClick={() => window.openDrill(window.kpiDrill.pipeline())} />
+        <KpiCard label="BOOKED" accent="var(--c-won)" value={fmt.money(D.totals.wonAmount)} sub={`${D.totals.wonCount} closed-won deals`}
+          onClick={() => window.openDrill({ eyebrow: 'Booked', title: 'Closed-won deals', subtitle: `${D.totals.wonCount} deals booked${D.quarterScoped ? ' · ' + D.quarter : ''}`, deals: window.__deals().filter(d => d.status === 'Won') })} />
       </div>
 
       <div className="grid col-2" style={{ gridTemplateColumns: '1.65fr 1fr', alignItems: 'stretch' }}>
@@ -1683,10 +1863,10 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
 
         <Panel title="Attainment & coverage" sub="Booked revenue vs your quarterly goals" style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            {fyTarget > 0 ? (
+            {scopedTarget > 0 ? (
               <React.Fragment>
                 <CoverageGauge value={attainment} max={100} unit="%" gaugeLabel="attainment"
-                  label="Booked" sublabel={fmt.money(T.wonAmount)} subtext={`of ${fmt.money(fyTarget)} FY goal`}
+                  label="Booked" sublabel={fmt.money(T.wonAmount)} subtext={`of ${fmt.money(scopedTarget)} ${targetLabel}`}
                   onClick={() => window.openDrill({ eyebrow: 'Booked', title: 'Closed-won deals', subtitle: `${T.wonCount} deals booked`, deals: window.__deals().filter(d => d.status === 'Won') })} />
                 <div style={{ display: 'flex', gap: 18, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
                   <div><div className="faint" style={{ fontSize: 11.5 }}>GAP TO TARGET</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{gap > 0 ? fmt.money(gap) : 'Met ✓'}</div></div>
@@ -1696,12 +1876,12 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
               </React.Fragment>
             ) : (
               <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 6 }}>No FY target set</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 6 }}>No {D.quarterScoped ? D.quarter : 'FY'} target set</div>
                 <div className="faint" style={{ fontSize: 12.5, maxWidth: 260, margin: '0 auto' }}>Enter quarterly goals below to unlock attainment %, gap to target and pipeline coverage. Booked so far: <b style={{ color: 'var(--c-won)' }}>{fmt.money(T.wonAmount)}</b>.</div>
               </div>
             )}
           </div>
-          <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={fyTarget} status={g.status} />
+          <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={g.fyTarget} status={g.status} />
         </Panel>
       </div>
 
@@ -2362,6 +2542,9 @@ function App() {
   const [lens, setLens]           = useStateA('Weighted');
   const [pipeline, setPipeline]   = useStateA('All pipelines');
   const [fy, setFy]               = useStateA('FY2026');
+  const [quarter, setQuarter]     = useStateA('Full year');   // quarter focus
+  const [stageScope, setStageScope] = useStateA('All stages'); // stage scope
+  const [kind, setKind]           = useStateA('Both');        // business type
   const [loading, setLoading]     = useStateA(false);
   const [, bump]                  = useStateA(0);   // forces re-render after live fetch
   const [drill, setDrill]         = useStateA(null); // active drill-down payload
@@ -2378,7 +2561,7 @@ function App() {
       const res = await fetch('api/forecast', { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const j = await res.json();
-      if (j && !j.error) { window.PLEX_DATA = j; bump(n => n + 1); }
+      if (j && !j.error) { window.PLEX_RAW = j; bump(n => n + 1); }
     } catch (e) {
       // keep the snapshot; mark it clearly as not-live
       console.warn('Live forecast unavailable, showing snapshot:', e.message);
@@ -2400,6 +2583,11 @@ function App() {
 
   const applyDirection = (name) => setTweak({ direction: name, ...DIRECTIONS[name] });
 
+  // Derive the rendered view from the raw pool + active filters. Every page reads
+  // window.PLEX_DATA, so this one line makes the filters apply everywhere at once.
+  const rawData = window.PLEX_RAW || window.PLEX_DATA;
+  window.PLEX_DATA = buildView(rawData, { quarter, stageScope, kind });
+
   const pageProps = { lens, setLens, pipeline, setPipeline, fy, setFy, chartStyle: t.chartStyle };
   let view;
   if      (page === 'forecast') view = <ForecastPage {...pageProps} />;
@@ -2410,6 +2598,7 @@ function App() {
   else                          view = <ComingPage id={page} {...pageProps} />;
 
   return (
+    <FilterCtx.Provider value={{ quarter, setQuarter, stageScope, setStageScope, kind, setKind }}>
     <div className={`shell ${collapsed ? 'nav-collapsed' : ''}`}>
       <Sidebar page={page} setPage={setPage} collapsed={collapsed} />
       <div className="main">
@@ -2448,6 +2637,7 @@ function App() {
         <TweakRadio label="Style" value={t.chartStyle} options={['columns', 'area', 'stems']} onChange={v => setTweak('chartStyle', v)} />
       </TweaksPanel>
     </div>
+    </FilterCtx.Provider>
   );
 }
 

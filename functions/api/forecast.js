@@ -180,6 +180,15 @@ function tier(d) {                          // confidence band by probability
   if (p >= 50) return 'best';
   return 'pipe';
 }
+// Stage → maturity band (drives the "All stages / Qualified" scope filter).
+const STAGE_BAND = {
+  'Lead': 'Outreach', 'Discovery/Pitch': 'Semi-qualified',
+  'Media Plan/Proposal': 'Qualified', 'Expected Renewal': 'Qualified', 'IO/Contract': 'Qualified',
+};
+const bandOf = (stage) => STAGE_BAND[stage] || (String(stage || '').startsWith('Closed') ? 'Qualified' : 'Outreach');
+// New vs Renewal — the CRM has no business-type field, so the only honest basis is
+// the stage: a deal sitting in "Expected Renewal" is a renewal, everything else is new.
+const dealTypeOf = (stage) => stage === 'Expected Renewal' ? 'Renewal' : 'New';
 const round = (n) => Math.round(n);
 
 /* ============================================================
@@ -310,6 +319,10 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
   for (const d of OPEN) allocByDeal[d.id] = allocFor(d);
   const wonAllocByDeal = {};         // WON: booked (amount) allocation
   for (const d of wonDeals) wonAllocByDeal[d.id] = allocForWon(d);
+  // Raw AMOUNT allocation (proration at 100%, ignoring probability) for every deal —
+  // lets the client narrow unweighted pipeline to a single quarter for the quarter filter.
+  const amountAllocByDeal = {};
+  for (const d of deals) amountAllocByDeal[d.id] = allocForWon(d);
 
   // quarters: open deals into their confidence tier; won deals into a separate 'won' band
   const qInit = () => ({ commit: 0, best: 0, pipe: 0, won: 0 });
@@ -461,9 +474,12 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       flightStart: (d.data && d.data.flight_start_date) ? String(d.data.flight_start_date).slice(0, 10) : null,
       flightEnd: (d.data && d.data.flight_end_date) ? String(d.data.flight_end_date).slice(0, 10) : null,
       tier: open ? tier(d) : null,   // commit | best | pipe
+      dealType: dealTypeOf(sv(d, 'stage_id')),   // New | Renewal (from stage)
+      band: bandOf(sv(d, 'stage_id')),           // Outreach | Semi-qualified | Qualified
       alloc: open
         ? (allocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 })
-        : (wonAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }),   // won: booked allocation
+        : (wonAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }),   // won: booked (weighted==amount) allocation
+      amountAlloc: amountAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 },  // raw amount per quarter
     };
   }).sort((a, b) => (b.open - a.open) || (b.weighted - a.weighted) || (b.amount - a.amount));
 
