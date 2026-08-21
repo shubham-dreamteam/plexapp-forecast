@@ -1769,9 +1769,10 @@ function FyScopeToggle() {
   if (!f) return null;
   return (
     <HelpWrap title="What is carryover?" card={<React.Fragment>
-      <p>Some deals run their ads outside 2026 — a few won deals ran in 2025, and some open deals run into 2027.</p>
-      <p><b>2026 flights</b> — count only revenue from ads that run in 2026. This is the default.</p>
-      <p><b>Carryover</b> — also count that outside revenue: 2025 revenue is added to Q1, 2027 revenue to Q4.</p>
+      <p>This dashboard shows 2026 money. But some deals run their ads in a different year.</p>
+      <p><b>Example:</b> an AMC deal ran its ads in Oct 2025. The KitKat deal runs Jan–Mar 2027. That money belongs to those years, not 2026.</p>
+      <p><b>2026 flights</b> (default) — leave that money out. You see a clean 2026 picture.</p>
+      <p><b>Carryover</b> — pull it in anyway: the 2025 money is shown in Q1, the 2027 money in Q4.</p>
     </React.Fragment>}>
       <Segmented value={f.fyScope} options={['2026 flights', 'Carryover']} onChange={f.setFyScope} />
     </HelpWrap>
