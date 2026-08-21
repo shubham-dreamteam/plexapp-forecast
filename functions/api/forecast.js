@@ -257,6 +257,14 @@ function allocFor(d) {
     amt(d) * prob(d) / 100
   );
 }
+// Booked (Closed-Won) revenue is recognised across its flight window too, at 100%
+// (full amount, not probability-weighted) — same proration as the open tiers.
+function allocForWon(d) {
+  return reconcileAlloc(
+    allocateRaw(amt(d), 100, d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date),
+    amt(d)
+  );
+}
 
 function ownerName(d) {
   const o = d.data && d.data.owner_id;
@@ -298,21 +306,27 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
   const noValueCount = OPEN.filter(d => !amt(d)).length;
 
   // per-deal quarterly allocation (flight-date proration) — computed once, reused
-  const allocByDeal = {};
+  const allocByDeal = {};            // OPEN: weighted allocation, by confidence tier
   for (const d of OPEN) allocByDeal[d.id] = allocFor(d);
+  const wonAllocByDeal = {};         // WON: booked (amount) allocation
+  for (const d of wonDeals) wonAllocByDeal[d.id] = allocForWon(d);
 
-  // quarters: sum each deal's allocated value into its confidence tier
-  const qInit = () => ({ commit: 0, best: 0, pipe: 0 });
+  // quarters: open deals into their confidence tier; won deals into a separate 'won' band
+  const qInit = () => ({ commit: 0, best: 0, pipe: 0, won: 0 });
   const Q = { Q1: qInit(), Q2: qInit(), Q3: qInit(), Q4: qInit() };
   for (const d of OPEN) {
     const a = allocByDeal[d.id], t = tier(d);
     for (const k of ['Q1', 'Q2', 'Q3', 'Q4']) Q[k][t] += a[k];
   }
+  for (const d of wonDeals) {
+    const a = wonAllocByDeal[d.id];
+    for (const k of ['Q1', 'Q2', 'Q3', 'Q4']) Q[k].won += a[k];
+  }
   const nowQ = quarterOf(new Date().toISOString());
   const quarters = ['Q1','Q2','Q3','Q4'].map(q => ({
     q,
-    commit: round(Q[q].commit), best: round(Q[q].best), pipe: round(Q[q].pipe),
-    total: round(Q[q].commit + Q[q].best + Q[q].pipe),
+    commit: round(Q[q].commit), best: round(Q[q].best), pipe: round(Q[q].pipe), won: round(Q[q].won),
+    total: round(Q[q].commit + Q[q].best + Q[q].pipe),   // weighted open (KPI ties); chart adds `won` on top
     ...(q === nowQ ? { now: true } : {}),
   }));
 
@@ -357,6 +371,36 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
   const peakQ = [...quarters].sort((a, b) => b.total - a.total)[0] || { q: '—', total: 0 };
   const peakShare = weighted ? round(peakQ.total / weighted * 100) : 0;
 
+  // sales channel — from the deal `source` field. Open deals by weighted, booked (won) by amount.
+  const channelLabel = (src) => {
+    const s = String(src || '').trim();
+    if (/direct/i.test(s)) return 'Direct Ad Sales';
+    if (/affiliate/i.test(s)) return 'Enhanced Affiliate';
+    if (/channel/i.test(s)) return 'Channel Sales';
+    return s || 'Unassigned';
+  };
+  const channelOrder = ['Direct Ad Sales', 'Channel Sales', 'Enhanced Affiliate'];
+  const channelMix = (pool, metric) => {
+    const agg = {};
+    for (const d of pool) {
+      const ch = channelLabel(d.data && d.data.source);
+      (agg[ch] ||= { deals: 0, value: 0, clients: {} });
+      agg[ch].deals += 1; agg[ch].value += metric(d);
+      const cn = normPartner(sv(d, 'partner_agency'));
+      (agg[ch].clients[cn] ||= { deals: 0, value: 0 });
+      agg[ch].clients[cn].deals += 1; agg[ch].clients[cn].value += metric(d);
+    }
+    const ord = (name) => { const i = channelOrder.indexOf(name); return i < 0 ? 99 : i; };
+    return Object.entries(agg).map(([name, v]) => ({
+      name, deals: v.deals, value: round(v.value),
+      clients: Object.entries(v.clients)
+        .map(([cn, cv]) => ({ name: cn, deals: cv.deals, value: round(cv.value) }))
+        .sort((a, b) => b.value - a.value || b.deals - a.deals || a.name.localeCompare(b.name)),
+    })).sort((a, b) => ord(a.name) - ord(b.name) || b.value - a.value);
+  };
+  const channelsOpen = channelMix(OPEN, wtd);
+  const channelsBooked = channelMix(wonDeals, amt);
+
   const fmtK = (n) => '$' + Math.round(n / K) + 'K';
   const fmtM = (n) => '$' + (n / M).toFixed(2).replace(/\.?0+$/, '') + 'M';
   const money = (n) => Math.abs(n) >= M ? fmtM(n) : fmtK(n);
@@ -387,6 +431,14 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       calc: `${noValueCount} ÷ ${OPEN.length} open deals = ${OPEN.length ? round(noValueCount / OPEN.length * 100) : 0}% without a value   ·   blended probability = ${weightedPct}%`,
     },
   ];
+  if (wonAmt > 0) {
+    insights.splice(2, 0, {   // surface booked revenue near the commit insight
+      tone: 'good', icon: 'up',
+      title: `${money(wonAmt)} booked in FY${FY}`,
+      body: `${wonDeals.length} closed-won deals recognise <b class="hl">${money(wonAmt)}</b> of booked revenue, prorated across their flight windows. Booked sits outside the open forecast — Commit counts open deals at ≥ 80% plus won.`,
+      calc: `booked = ${money(wonAmt)}   ·   weighted + booked = ${money(weighted + wonAmt)}`,
+    });
+  }
 
   /* ---- cleaned deal register (all deals, open + closed) ---- */
   const dealRows = deals.map(d => {
@@ -403,12 +455,15 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       open,
       status: open ? 'Open' : (String(sv(d, 'stage_id') || '').includes('Won') ? 'Won' : 'Lost'),
       partner: normPartner(sv(d, 'partner_agency')),
+      channel: channelLabel(d.data && d.data.source),
       owner: ownerName(d),
       closeDate: (d.data && d.data.expected_close_date) ? String(d.data.expected_close_date).slice(0, 10) : null,
       flightStart: (d.data && d.data.flight_start_date) ? String(d.data.flight_start_date).slice(0, 10) : null,
       flightEnd: (d.data && d.data.flight_end_date) ? String(d.data.flight_end_date).slice(0, 10) : null,
       tier: open ? tier(d) : null,   // commit | best | pipe
-      alloc: open ? (allocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }) : { Q1: 0, Q2: 0, Q3: 0, Q4: 0 },
+      alloc: open
+        ? (allocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 })
+        : (wonAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }),   // won: booked allocation
     };
   }).sort((a, b) => (b.open - a.open) || (b.weighted - a.weighted) || (b.amount - a.amount));
 
@@ -459,6 +514,7 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       openPipe: { value: round(pipeline), label: 'Open pipeline', sub: `${OPEN.length} open deals`, accent: 'var(--c-pipe)' },
     },
     quarters, stages, partners, insights,
+    channelsOpen, channelsBooked, channelOrder,
     missing: {
       history: 'No historical quota or attainment data is in the CRM. Connect a quota system (Salesforce quota object, Google Sheets, etc.) to unlock attainment %, coverage ratio, and velocity trends.',
       deals: 'Individual deal line-items are available via the CRM API — this table view requires a live CRM connection to render the full register.',
@@ -469,7 +525,7 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       commitAmount: round(commitAmt), commitWeighted: round(commitW), commitRate,
       commitCount: commitDeals.length, commitOpenCount: commitOpen.length,
       wonCount: wonDeals.length, wonAmount: round(wonAmt), wonWeighted: round(wonW),
-      totalForecast: round(totalForecast),
+      totalForecast: round(totalForecast), weightedPlusBooked: round(weighted + wonAmt),
       top3Share, bestUpside, pipeUpside, weightedPct, knownWeighted,
       target: null,
     },

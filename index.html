@@ -29,6 +29,8 @@
   --c-pipe-soft: rgba(79, 147, 247, 0.16);
   --c-risk:   #f25555;
   --c-risk-soft: rgba(242, 85, 85, 0.15);
+  --c-won:    #8b3fd4;
+  --c-won-soft: rgba(139, 63, 212, 0.16);
 
   --accent: #e5a00d;
   --accent-ink: #1a1304;
@@ -399,6 +401,9 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .seg-mini { display: inline-flex; background: var(--card-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
 .seg-mini button { border: none; background: none; color: var(--text-2); font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 7px; cursor: pointer; font-family: var(--font-ui); }
 .seg-mini button.on { background: var(--accent); color: var(--accent-ink); }
+.goal-input { width: 100%; background: var(--card-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; color: var(--text); font-size: 13px; font-family: var(--font-mono); outline: none; transition: border-color .15s; }
+.goal-input:focus { border-color: var(--accent); }
+.goal-input::placeholder { color: var(--text-3); }
 .tbl th.sort { cursor: pointer; user-select: none; white-space: nowrap; }
 .tbl th.sort:hover { color: var(--text); }
 .tbl th .caret { opacity: .55; font-size: 9px; margin-left: 3px; }
@@ -538,10 +543,10 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 
   // Quarterly — all weighted (commit/best/pipe split by probability tier)
   const quarters = [
-    { q: 'Q1', total: 0,       commit: 0,       best: 0,       pipe: 0       },
-    { q: 'Q2', total: 145000,  commit: 105000,  best: 0,       pipe: 40000,  now: true },
-    { q: 'Q3', total: 271000,  commit: 129000,  best: 25000,   pipe: 117000  },
-    { q: 'Q4', total: 90000,   commit: 0,       best: 0,       pipe: 90000   },
+    { q: 'Q1', total: 0,       commit: 0,       best: 0,       pipe: 0,      won: 0 },
+    { q: 'Q2', total: 145000,  commit: 105000,  best: 0,       pipe: 40000,  won: 0, now: true },
+    { q: 'Q3', total: 271000,  commit: 129000,  best: 25000,   pipe: 117000, won: 0 },
+    { q: 'Q4', total: 90000,   commit: 0,       best: 0,       pipe: 90000,  won: 0 },
   ];
 
   // Stages (open deals only — no Closed Won stage deals in CRM)
@@ -613,11 +618,12 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
   window.PLEX_DATA = {
     fy: 'FY2026', updated: 'Jun 6, 2026 (snapshot)', unit: 'Ad Sales', live: false,
     kpis, quarters, stages, partners, insights, missing,
+    channelsOpen: [], channelsBooked: [], channelOrder: [],
     totals: {
       unweighted: unweightedTotal, weightedRaw: weightedTotal, totalDeals,
       commitAmount, commitWeighted, commitRate,
       commitCount: 0, commitOpenCount: 0, wonCount: 0, wonAmount: 0, wonWeighted: 0,
-      totalForecast: weightedTotal,
+      totalForecast: weightedTotal, weightedPlusBooked: weightedTotal,
       top3Share, bestUpside, pipeUpside, weightedPct,
       knownWeighted,
       target: null, // no quota in CRM
@@ -971,6 +977,7 @@ const SERIES = [
   { key: 'pipe',   label: 'Pipeline',  color: 'var(--c-pipe)',   fill: 'var(--c-pipe-soft)' },
   { key: 'best',   label: 'Best case', color: 'var(--c-best)',   fill: 'var(--c-best-soft)' },
   { key: 'commit', label: 'Commit',    color: 'var(--c-commit)', fill: 'var(--c-commit-soft)' },
+  { key: 'won',    label: 'Booked',    color: 'var(--c-won)',    fill: 'var(--c-won-soft)' },
 ];
 
 function useTooltip() {
@@ -996,9 +1003,9 @@ window.drillData = {
   open:    () => window.__deals().filter(d => d.open),
   all:     () => window.__deals(),
   lost:    () => window.__deals().filter(d => !d.open),
-  // a deal contributes to a quarter if it has weighted value allocated there;
-  // show that allocated slice (not the whole deal) so the drill total = the bar.
-  quarter: (q) => window.__deals().filter(d => d.open && d.alloc && d.alloc[q] > 0).map(d => ({ ...d, weighted: d.alloc[q] })),
+  // a deal contributes to a quarter if it has value allocated there (open = weighted,
+  // won = booked); show that allocated slice so the drill total matches the bar.
+  quarter: (q) => window.__deals().filter(d => d.alloc && d.alloc[q] > 0).map(d => ({ ...d, weighted: d.alloc[q] })),
   stage:   (name) => window.__deals().filter(d => d.open && d.stage === name),
   tier:    (t) => window.__deals().filter(d => d.open && d.tier === t),
   quarterTier: (q, t) => window.__deals().filter(d => d.open && d.quarter === q && d.tier === t),
@@ -1024,9 +1031,12 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
   const padL = 58, padR = 18, padT = 34, padB = 38;
   const x0 = padL, x1 = W - padR, y0 = padT, y1 = H - padB;
   const plotW = x1 - x0, plotH = y1 - y0;
-  const maxY = 800000;
-  const ticks = [0, 200000, 400000, 600000, 800000];
+  const grand = (q) => (q.commit || 0) + (q.best || 0) + (q.pipe || 0) + (q.won || 0);
+  const niceCeil = (v) => { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10; return m * p; };
+  const maxY = niceCeil(Math.max(1, ...quarters.map(grand), ...quarters.map(q => q.target || 0)));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => Math.round(maxY * f));
   const yS = (v) => y1 - (v / maxY) * plotH;
+  const axisLabel = (t) => t === 0 ? '$0' : (t >= 1e6 ? '$' + (t / 1e6).toFixed(t % 1e6 ? 1 : 0) + 'M' : '$' + Math.round(t / 1000) + 'K');
   const n = quarters.length;
   const band = plotW / n;
   const colW = Math.min(78, band * 0.46);
@@ -1034,13 +1044,14 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
 
   const tipContent = (q) => (
     <div>
-      <h5>{q.q === 'Q2' ? 'Q2 · current' : q.q} <span className="faint mono" style={{fontWeight:400,fontSize:11}}>{fmt.money(q.total)}</span></h5>
+      <h5>{q.now ? q.q + ' · current' : q.q} <span className="faint mono" style={{fontWeight:400,fontSize:11}}>{fmt.money(grand(q))}</span></h5>
       {[...SERIES].reverse().map(s => q[s.key] > 0 && (
         <div className="tr" key={s.key}>
           <span className="lhs"><span className="sw" style={{ background: s.color }}></span>{s.label}</span>
           <b>{fmt.money(q[s.key])}</b>
         </div>
       ))}
+      {q.target > 0 && <div className="tr trtot"><span className="lhs">Goal</span><b>{fmt.money(q.target)}</b></div>}
     </div>
   );
 
@@ -1065,9 +1076,11 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
         <linearGradient id="gCommit" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-commit)"/><stop offset="1" stopColor="var(--c-commit)" stopOpacity="0.82"/></linearGradient>
         <linearGradient id="gBest"   x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-best)"/><stop offset="1" stopColor="var(--c-best)" stopOpacity="0.82"/></linearGradient>
         <linearGradient id="gPipe"   x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-pipe)"/><stop offset="1" stopColor="var(--c-pipe)" stopOpacity="0.82"/></linearGradient>
+        <linearGradient id="gWon"    x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-won)"/><stop offset="1" stopColor="var(--c-won)" stopOpacity="0.82"/></linearGradient>
         <linearGradient id="aCommit" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-commit)" stopOpacity="0.45"/><stop offset="1" stopColor="var(--c-commit)" stopOpacity="0.02"/></linearGradient>
         <linearGradient id="aBest"   x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-best)" stopOpacity="0.4"/><stop offset="1" stopColor="var(--c-best)" stopOpacity="0.02"/></linearGradient>
         <linearGradient id="aPipe"   x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-pipe)" stopOpacity="0.4"/><stop offset="1" stopColor="var(--c-pipe)" stopOpacity="0.02"/></linearGradient>
+        <linearGradient id="aWon"    x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--c-won)" stopOpacity="0.4"/><stop offset="1" stopColor="var(--c-won)" stopOpacity="0.02"/></linearGradient>
       </defs>
 
       {quarters.map((q, i) => q.now && (
@@ -1078,7 +1091,7 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
       {ticks.map(t => (
         <g key={t}>
           <line className="grid-line" x1={x0} x2={x1} y1={yS(t)} y2={yS(t)} />
-          <text className="axis-label" x={x0 - 10} y={yS(t) + 4} textAnchor="end">{t === 0 ? '$0' : '$' + t / 1000 + 'K'}</text>
+          <text className="axis-label" x={x0 - 10} y={yS(t) + 4} textAnchor="end">{axisLabel(t)}</text>
         </g>
       ))}
 
@@ -1088,15 +1101,15 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
         return (
           <g key={q.q} {...segHandlers(q)}>
             {SERIES.map((s, si) => {
-              const v = q[s.key]; if (v <= 0) return null;
+              const v = q[s.key] || 0; if (v <= 0) return null;
               const yTop = yS(acc + v); const yBot = yS(acc); acc += v;
               const h = Math.max(0, yBot - yTop - gap);
               const isTop = SERIES.slice(si + 1).every(ss => q[ss.key] <= 0);
               return <rect key={s.key} className="col-seg" x={left} y={yTop} width={colW} height={h}
                 rx={isTop ? 6 : 4} fill={`url(#g${s.key[0].toUpperCase()}${s.key.slice(1)})`} />;
             })}
-            {q.target && <line className="target-line" x1={left - 6} x2={left + colW + 6} y1={yS(q.target)} y2={yS(q.target)} />}
-            <text className="bar-total" x={c} y={yS(q.total) - 12} textAnchor="middle" fontSize="15">{fmt.money(q.total)}</text>
+            {q.target > 0 && <line className="target-line" x1={left - 6} x2={left + colW + 6} y1={yS(q.target)} y2={yS(q.target)} />}
+            <text className="bar-total" x={c} y={yS(grand(q)) - 12} textAnchor="middle" fontSize="15">{fmt.money(grand(q))}</text>
           </g>
         );
       })}
@@ -1106,23 +1119,23 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
         return (
           <g key={q.q} {...segHandlers(q)}>
             {SERIES.map((s) => {
-              const v = q[s.key]; if (v <= 0) return null;
+              const v = q[s.key] || 0; if (v <= 0) return null;
               const yTop = yS(acc + v); const yBot = yS(acc); acc += v;
               return <line key={s.key} className="col-seg" x1={c} x2={c} y1={yBot} y2={yTop + 1} stroke={s.color} strokeWidth={sw} strokeLinecap="round" />;
             })}
-            {q.target && <line className="target-line" x1={c - 16} x2={c + 16} y1={yS(q.target)} y2={yS(q.target)} />}
-            <circle cx={c} cy={yS(q.total)} r="4.5" fill="var(--text)" />
-            <text className="bar-total" x={c} y={yS(q.total) - 14} textAnchor="middle" fontSize="15">{fmt.money(q.total)}</text>
+            {q.target > 0 && <line className="target-line" x1={c - 16} x2={c + 16} y1={yS(q.target)} y2={yS(q.target)} />}
+            <circle cx={c} cy={yS(grand(q))} r="4.5" fill="var(--text)" />
+            <text className="bar-total" x={c} y={yS(grand(q)) - 14} textAnchor="middle" fontSize="15">{fmt.money(grand(q))}</text>
           </g>
         );
       })}
 
       {style === 'area' && (() => {
-        const order = ['pipe', 'best', 'commit'];
+        const order = ['pipe', 'best', 'commit', 'won'];
         let baseline = quarters.map(() => 0);
         const layers = [];
         order.forEach((key) => {
-          const top = quarters.map((q, i) => baseline[i] + q[key]);
+          const top = quarters.map((q, i) => baseline[i] + (q[key] || 0));
           layers.push({ key, top: top.slice(), base: baseline.slice() });
           baseline = top;
         });
@@ -1136,9 +1149,9 @@ function QuarterlyChart({ quarters, style = 'columns', tip }) {
             {quarters.map((q, i) => (
               <g key={q.q} {...segHandlers(q)}>
                 <rect x={cx(i) - band / 2} y={y0} width={band} height={plotH} fill="transparent" />
-                {q.target && <line className="target-line" x1={cx(i) - 18} x2={cx(i) + 18} y1={yS(q.target)} y2={yS(q.target)} />}
-                <circle cx={cx(i)} cy={yS(q.total)} r="4" fill="var(--text)" stroke="var(--card)" strokeWidth="2" />
-                <text className="bar-total" x={cx(i)} y={yS(q.total) - 13} textAnchor="middle" fontSize="14">{fmt.money(q.total)}</text>
+                {q.target > 0 && <line className="target-line" x1={cx(i) - 18} x2={cx(i) + 18} y1={yS(q.target)} y2={yS(q.target)} />}
+                <circle cx={cx(i)} cy={yS(grand(q))} r="4" fill="var(--text)" stroke="var(--card)" strokeWidth="2" />
+                <text className="bar-total" x={cx(i)} y={yS(grand(q)) - 13} textAnchor="middle" fontSize="14">{fmt.money(grand(q))}</text>
               </g>
             ))}
           </g>
@@ -1502,11 +1515,92 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
   );
 }
 
+/* ---- quarterly revenue goals, persisted per-browser (localStorage) ----
+   The CRM has no quota, so goals are user-entered. Stored as { FY: {Q1..Q4} }. */
+function useGoals(fy) {
+  const KEY = 'plex_goals_v1';
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } };
+  const [all, setAll] = React.useState(read);
+  const goals = all[fy] || {};
+  const setGoal = (q, raw) => {
+    const n = Math.round(Number(String(raw).replace(/[^0-9.]/g, '')) || 0);
+    setAll(prev => {
+      const next = { ...prev, [fy]: { ...(prev[fy] || {}) } };
+      if (n > 0) next[fy][q] = n; else delete next[fy][q];
+      try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const entered = ['Q1', 'Q2', 'Q3', 'Q4'].filter(q => goals[q] > 0);
+  const fyTarget = entered.reduce((s, q) => s + goals[q], 0);
+  return { goals, setGoal, fyTarget, enteredCount: entered.length };
+}
+
+function GoalEditor({ goals, setGoal, enteredCount, fyTarget }) {
+  return (
+    <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+      <div className="between" style={{ marginBottom: 8 }}>
+        <span className="faint" style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700 }}>Set quarterly goals</span>
+        <span className="faint" style={{ fontSize: 11.5 }}>{enteredCount} of 4 entered{fyTarget ? ' · FY ' + fmt.money(fyTarget) : ''}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {['Q1', 'Q2', 'Q3', 'Q4'].map(q => (
+          <label key={q + '-' + (goals[q] || 0)} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span className="faint" style={{ fontSize: 10, letterSpacing: '.06em' }}>{q}</span>
+            <input className="goal-input" type="text" inputMode="numeric" defaultValue={goals[q] || ''} placeholder="$0"
+              onBlur={e => setGoal(q, e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+          </label>
+        ))}
+      </div>
+      <div className="faint" style={{ fontSize: 10.5, marginTop: 6 }}>Saved in this browser. No quota exists in the CRM.</div>
+    </div>
+  );
+}
+
+function ChannelMix({ open, booked }) {
+  const [mode, setMode] = React.useState('open');
+  const data = (mode === 'booked' ? booked : open) || [];
+  const max = Math.max(1, ...data.map(c => c.value));
+  const chColor = { 'Direct Ad Sales': 'var(--accent)', 'Channel Sales': 'var(--c-pipe)', 'Enhanced Affiliate': 'var(--c-won)' };
+  return (
+    <div>
+      <div className="dt-toolbar" style={{ marginBottom: 12 }}>
+        <div className="seg-mini">
+          <button className={mode === 'open' ? 'on' : ''} onClick={() => setMode('open')}>Open (weighted)</button>
+          <button className={mode === 'booked' ? 'on' : ''} onClick={() => setMode('booked')}>Booked (won)</button>
+        </div>
+      </div>
+      <div className="conc">
+        {data.length === 0 && <div className="faint" style={{ padding: '10px 0', fontSize: 13 }}>No {mode === 'booked' ? 'booked' : 'open'} deals.</div>}
+        {data.map((c, i) => (
+          <div className="conc-row" key={c.name}>
+            <span className="conc-rank">{String(i + 1).padStart(2, '0')}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="conc-name">{c.name}</div>
+              <div className="conc-sub">{c.deals} deals{c.clients && c.clients.length ? ' · ' + c.clients.length + (c.clients.length === 1 ? ' client' : ' clients') : ''}</div>
+              <div className="conc-track"><div className="conc-fill" style={{ width: (c.value / max * 100) + '%', background: chColor[c.name] || 'var(--accent)' }}></div></div>
+            </div>
+            <span className="conc-val num">{fmt.money(c.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartStyle }) {
   const D = window.PLEX_DATA;
   const tip = useTooltip();
   const full = lens === 'Full pipeline';
   const metric = full ? 'total' : 'weighted';
+  const T = D.totals;
+  const g = useGoals('FY2026');
+  const fyTarget = g.fyTarget;
+  const attainment = fyTarget ? Math.round(T.wonAmount / fyTarget * 100) : null;
+  const gap = fyTarget ? Math.max(0, fyTarget - T.wonAmount) : null;
+  const coverage = (gap && gap > 0) ? Math.round(T.unweighted / gap * 10) / 10 : null;
+  const chartQuarters = D.quarters.map(q => ({ ...q, target: g.goals[q.q] || 0 }));
 
   return (
     <div className="page">
@@ -1525,12 +1619,12 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
       </div>
 
       <div className="grid col-2" style={{ gridTemplateColumns: '1.65fr 1fr', alignItems: 'stretch' }}>
-        <Panel title="Quarterly forecast" sub="Weighted value by close quarter · stacked by confidence"
+        <Panel title="Quarterly forecast" sub="Weighted pipeline + booked, prorated by flight dates · dashed line = quarter goal"
           style={{ display: 'flex', flexDirection: 'column' }}
           right={<div className="legend">
             {[...SERIES].reverse().map(s => <span className="lg" key={s.key}><span className="sw" style={{ background: s.color }}></span>{s.label}</span>)}
           </div>}>
-          <QuarterlyChart quarters={D.quarters} style={chartStyle} tip={tip} />
+          <QuarterlyChart quarters={chartQuarters} style={chartStyle} tip={tip} />
           <div className="between" style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px solid var(--border)' }}>
             <SourceNote>Live from plexapp.dreamteamcrm.ai · GET-only · {D.updated}</SourceNote>
             <span className="faint" style={{ fontSize: 12.5 }}>Σ weighted = {fmt.money(D.totals.weightedRaw)} across {D.totals.totalDeals} open deals</span>
@@ -1557,16 +1651,33 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           </div>
         </Panel>
 
-        <Panel title="Commit rate" sub="Committed (≥80% + closed-won) as % of total forecast" style={{ display: 'flex', flexDirection: 'column' }}>
+        <Panel title="Attainment & coverage" sub="Booked revenue vs your quarterly goals" style={{ display: 'flex', flexDirection: 'column' }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <CoverageGauge value={D.totals.commitRate} max={100} unit="%" gaugeLabel="commit rate"
-              label="Weighted commit" sublabel={fmt.money(D.totals.commitWeighted)}
-              subtext={`of ${fmt.money(D.totals.totalForecast)} total forecast`} />
-            <div style={{ display: 'flex', gap: 18, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <div><div className="faint" style={{ fontSize: 11.5 }}>COMMIT DEALS</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-commit)' }}>{D.totals.commitCount}</div></div>
-              <div><div className="faint" style={{ fontSize: 11.5 }}>OF WHICH WON</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{D.totals.wonCount}</div></div>
-            </div>
+            {fyTarget > 0 ? (
+              <React.Fragment>
+                <CoverageGauge value={attainment} max={100} unit="%" gaugeLabel="attainment"
+                  label="Booked" sublabel={fmt.money(T.wonAmount)} subtext={`of ${fmt.money(fyTarget)} FY goal`}
+                  onClick={() => window.openDrill({ eyebrow: 'Booked', title: 'Closed-won deals', subtitle: `${T.wonCount} deals booked`, deals: window.__deals().filter(d => d.status === 'Won') })} />
+                <div style={{ display: 'flex', gap: 18, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                  <div><div className="faint" style={{ fontSize: 11.5 }}>GAP TO TARGET</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{gap > 0 ? fmt.money(gap) : 'Met ✓'}</div></div>
+                  <div><div className="faint" style={{ fontSize: 11.5 }}>PIPELINE COVERAGE</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: coverage != null ? (coverage >= 3 ? 'var(--c-commit)' : 'var(--c-risk)') : 'var(--text)' }}>{coverage != null ? coverage + '×' : (gap === 0 ? '—' : '—')}</div></div>
+                  <div><div className="faint" style={{ fontSize: 11.5 }}>WEIGHTED + BOOKED</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{fmt.money(T.weightedPlusBooked)}</div></div>
+                </div>
+              </React.Fragment>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 6 }}>No FY target set</div>
+                <div className="faint" style={{ fontSize: 12.5, maxWidth: 260, margin: '0 auto' }}>Enter quarterly goals below to unlock attainment %, gap to target and pipeline coverage. Booked so far: <b style={{ color: 'var(--c-won)' }}>{fmt.money(T.wonAmount)}</b>.</div>
+              </div>
+            )}
           </div>
+          <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={fyTarget} />
+        </Panel>
+      </div>
+
+      <div style={{ marginTop: 'var(--gap)' }}>
+        <Panel title="Sales channel" sub="Mix by deal source · toggle open (weighted) vs booked (won)">
+          <ChannelMix open={D.channelsOpen} booked={D.channelsBooked} />
         </Panel>
       </div>
 
