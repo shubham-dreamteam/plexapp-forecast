@@ -462,18 +462,18 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .mstat .ms-val { font-size: 22px; font-weight: 700; }
 .modal-note { padding: 12px 22px; font-size: 12.5px; color: var(--text-2); background: var(--card-2); border-bottom: 1px solid var(--border); }
 .modal-body { overflow-y: auto; padding: 4px 8px 8px; }
-/* fy-scope toggle + explainer hover card */
-.fy-scope { position: relative; }
-.fy-scope .hovercard { position: absolute; top: calc(100% + 9px); left: 50%; transform: translateX(-50%);
+/* filter-control explainer hover cards */
+.helpwrap { position: relative; }
+.helpwrap .hovercard { position: absolute; top: calc(100% + 9px); left: 50%; transform: translateX(-50%);
   width: 320px; z-index: 70; background: var(--card); border: 1px solid var(--border-2); border-radius: var(--r-md);
   box-shadow: 0 20px 55px rgba(0,0,0,.55); padding: 14px 16px 6px;
-  opacity: 0; visibility: hidden; transition: opacity .14s var(--ease), visibility .14s; pointer-events: none; }
-.fy-scope:hover .hovercard, .fy-scope .hovercard.show { opacity: 1; visibility: visible; }
-.fy-scope .hovercard::before { content: ''; position: absolute; top: -5px; left: 50%; transform: translateX(-50%) rotate(45deg);
+  opacity: 0; visibility: hidden; transition: opacity .14s var(--ease) .18s, visibility .14s .18s; pointer-events: none; }
+.helpwrap:hover .hovercard, .helpwrap .hovercard.show { opacity: 1; visibility: visible; }
+.helpwrap .hovercard::before { content: ''; position: absolute; top: -5px; left: 50%; transform: translateX(-50%) rotate(45deg);
   width: 9px; height: 9px; background: var(--card); border-left: 1px solid var(--border-2); border-top: 1px solid var(--border-2); }
-.fy-scope .hc-title { font-family: var(--font-display); font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
-.fy-scope .hovercard p { margin: 0 0 9px; font-size: 12px; line-height: 1.55; color: var(--text-2); }
-.fy-scope .hovercard b { color: var(--text); }
+.helpwrap .hc-title { font-family: var(--font-display); font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.helpwrap .hovercard p { margin: 0 0 9px; font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.helpwrap .hovercard b { color: var(--text); }
 
 /* drill column picker — add optional columns to the deal table */
 .colpick { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 10px 22px; border-bottom: 1px solid var(--border); }
@@ -481,6 +481,7 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .colpick button { font-size: 11.5px; font-weight: 600; padding: 4px 11px; border-radius: 99px; border: 1px solid var(--border); background: var(--card-2); color: var(--text-2); cursor: pointer; transition: all .12s var(--ease); }
 .colpick button:hover { border-color: var(--border-2); color: var(--text); }
 .colpick button.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 700; }
+.colpick.inline { padding: 0 0 12px; border-bottom: none; }
 
 /* use-case overlay (embeds the cream use-case map page) */
 .uc-overlay { position: fixed; inset: 0; z-index: 1100; background: color-mix(in srgb, #000 66%, transparent);
@@ -1724,28 +1725,56 @@ function FilterBar() {
   if (!f) return null;
   return (
     <React.Fragment>
-      <Segmented value={f.kind} options={['Both', 'New', 'Renewal']} onChange={f.setKind} />
-      <Segmented value={f.quarter} options={['Full year', 'Q1', 'Q2', 'Q3', 'Q4']} onChange={f.setQuarter} />
-      <Segmented value={f.stageScope} options={['All stages', 'Qualified']} onChange={f.setStageScope} />
+      <HelpWrap title="New vs renewal business" card={<React.Fragment>
+        <p><b>Both</b> — every deal, whatever its type.</p>
+        <p><b>New</b> — first-time business.</p>
+        <p><b>Renewal</b> — deals expected to re-sign: the ones sitting in the "Expected Renewal" stage. The CRM has no renewal field, so the stage is the signal.</p>
+      </React.Fragment>}>
+        <Segmented value={f.kind} options={['Both', 'New', 'Renewal']} onChange={f.setKind} />
+      </HelpWrap>
+      <HelpWrap title="Focus on one quarter" card={<React.Fragment>
+        <p><b>Full year</b> — the whole of FY2026.</p>
+        <p><b>Q1–Q4</b> — narrow every number to revenue that lands in that quarter. An ad campaign that spans quarters is split day by day, so only the picked quarter's share counts. The chart keeps all four bars for context.</p>
+      </React.Fragment>}>
+        <Segmented value={f.quarter} options={['Full year', 'Q1', 'Q2', 'Q3', 'Q4']} onChange={f.setQuarter} />
+      </HelpWrap>
+      <HelpWrap title="How deep in the funnel?" card={<React.Fragment>
+        <p><b>All stages</b> — every open deal, including cold outreach that has no scope or budget yet.</p>
+        <p><b>Qualified</b> — only deals at Media Plan or later, where there is a real plan and price. Cold Lead outreach is left out. Won deals always count.</p>
+      </React.Fragment>}>
+        <Segmented value={f.stageScope} options={['All stages', 'Qualified']} onChange={f.setStageScope} />
+      </HelpWrap>
     </React.Fragment>
   );
 }
 
 // FY scope — which revenue counts toward FY2026. Sits next to the FY selector.
-function FyScopeToggle() {
-  const f = React.useContext(FilterCtx);
+/* Reusable hover explainer: wraps any control, floats a card under it on hover
+   that explains the logic in plain language. */
+function HelpWrap({ title, card, children }) {
   const [hover, setHover] = React.useState(false);
-  if (!f) return null;
   return (
-    <div className="fy-scope" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
-      <Segmented value={f.fyScope} options={['2026 flights', 'Carryover']} onChange={f.setFyScope} />
+    <div className="helpwrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      {children}
       <div className={'hovercard' + (hover ? ' show' : '')}>
-        <div className="hc-title">What is carryover?</div>
-        <p>Some deals run their ads outside 2026 — a few won deals ran in 2025, and some open deals run into 2027.</p>
-        <p><b>2026 flights</b> — count only revenue from ads that run in 2026. This is the default.</p>
-        <p><b>Carryover</b> — also count that outside revenue: 2025 revenue is added to Q1, 2027 revenue to Q4.</p>
+        <div className="hc-title">{title}</div>
+        {card}
       </div>
     </div>
+  );
+}
+
+function FyScopeToggle() {
+  const f = React.useContext(FilterCtx);
+  if (!f) return null;
+  return (
+    <HelpWrap title="What is carryover?" card={<React.Fragment>
+      <p>Some deals run their ads outside 2026 — a few won deals ran in 2025, and some open deals run into 2027.</p>
+      <p><b>2026 flights</b> — count only revenue from ads that run in 2026. This is the default.</p>
+      <p><b>Carryover</b> — also count that outside revenue: 2025 revenue is added to Q1, 2027 revenue to Q4.</p>
+    </React.Fragment>}>
+      <Segmented value={f.fyScope} options={['2026 flights', 'Carryover']} onChange={f.setFyScope} />
+    </HelpWrap>
   );
 }
 
@@ -1761,9 +1790,14 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
         <h1 className="title">{title}</h1>
       </div>
       <div className="head-controls">
-        {lens != null && <Segmented value={lens} options={['Weighted', 'Full pipeline']} onChange={setLens} />}
+        {lens != null && <HelpWrap title="How deals are counted" card={<React.Fragment>
+          <p><b>Weighted</b> — each open deal counts at its amount × win chance. A $100K deal at 25% counts as $25K. The realistic view.</p>
+          <p><b>Full pipeline</b> — every open deal counts at its full amount, as if everything closes. The best-case view.</p>
+          <p>Won deals always count in full — they are already booked.</p>
+        </React.Fragment>}>
+          <Segmented value={lens} options={['Weighted', 'Full pipeline']} onChange={setLens} />
+        </HelpWrap>}
         <FilterBar />
-        {pipeline != null && <Dropdown value={pipeline} options={D.pipelines} onChange={setPipeline} />}
         {fy != null && <Dropdown value={fy} options={D.fyOptions} onChange={setFy} />}
         <FyScopeToggle />
       </div>
@@ -2187,16 +2221,40 @@ const DRILL_OPT_COLS = [
   { key: 'channel', label: 'Channel',        sortKey: 'channel',     render: d => d.channel || '—' },
   { key: 'type',    label: 'Type',           sortKey: 'dealType',    render: d => d.dealType || '—' },
 ];
+// The Deals register doesn't show flight dates by default, so it's offered there too.
+const DEALS_OPT_COLS = [
+  { key: 'flight', label: 'Flight', sortKey: 'flightStart', render: d => d.flightStart ? `${d.flightStart} → ${d.flightEnd || '?'}` : '—' },
+  ...DRILL_OPT_COLS,
+];
 
-function DrillModal({ drill, onClose }) {
+// Optional-column picks, persisted per view (storageKey) across visits.
+function useOptCols(storageKey) {
   const [cols, setCols] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('plex_drill_cols') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch (e) { return []; }
   });
-  const toggleCol = (k) => setCols(prev => {
+  const toggle = (k) => setCols(prev => {
     const next = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k];
-    try { localStorage.setItem('plex_drill_cols', JSON.stringify(next)); } catch (e) {}
+    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch (e) {}
     return next;
   });
+  return { cols, toggle };
+}
+
+function ColPicker({ defs, cols, toggle, inline }) {
+  return (
+    <div className={'colpick' + (inline ? ' inline' : '')}>
+      <span className="cp-lab">Add to view</span>
+      {defs.map(c => (
+        <button key={c.key} className={cols.includes(c.key) ? 'on' : ''} onClick={() => toggle(c.key)}>
+          {cols.includes(c.key) ? '✓ ' : '+ '}{c.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DrillModal({ drill, onClose }) {
+  const { cols, toggle: toggleCol } = useOptCols('plex_drill_cols');
   const sort = useSort('weighted', 'desc');
   React.useEffect(() => {
     if (!drill) return;
@@ -2233,14 +2291,7 @@ function DrillModal({ drill, onClose }) {
           {(drill.extraStats || []).map((s, i) => <div className="mstat" key={i}><div className="ms-lab">{s.label}</div><div className="ms-val num">{s.value}</div></div>)}
         </div>
         {drill.note && <div className="modal-note">{drill.note}</div>}
-        <div className="colpick">
-          <span className="cp-lab">Add to view</span>
-          {DRILL_OPT_COLS.map(c => (
-            <button key={c.key} className={cols.includes(c.key) ? 'on' : ''} onClick={() => toggleCol(c.key)}>
-              {cols.includes(c.key) ? '✓ ' : '+ '}{c.label}
-            </button>
-          ))}
-        </div>
+        <ColPicker defs={DRILL_OPT_COLS} cols={cols} toggle={toggleCol} />
         <div className="modal-body">
           <table className="tbl">
             <thead><tr>
@@ -2282,6 +2333,8 @@ function DealRegister({ deals }) {
   const [q, setQ] = React.useState('');
   const [filter, setFilter] = React.useState('Open');
   const sort = useSort('weighted', 'desc');
+  const { cols, toggle } = useOptCols('plex_deals_cols');
+  const active = DEALS_OPT_COLS.filter(c => cols.includes(c.key));
   const rows = deals
     .filter(d => filter === 'All' || (filter === 'Open' ? d.open : d.status === filter))
     .filter(d => !q || (d.name + ' ' + d.account + ' ' + d.partner + ' ' + d.stage).toLowerCase().includes(q.toLowerCase()))
@@ -2294,6 +2347,7 @@ function DealRegister({ deals }) {
         <div className="seg-mini">{filters.map(f => <button key={f} className={filter === f ? 'on' : ''} onClick={() => setFilter(f)}>{f}</button>)}</div>
         <span className="dt-count">{rows.length} of {deals.length} deals</span>
       </div>
+      <ColPicker defs={DEALS_OPT_COLS} cols={cols} toggle={toggle} inline />
       <div className="dt-wrap">
         <table className="tbl">
           <thead><tr>
@@ -2305,6 +2359,7 @@ function DealRegister({ deals }) {
             <SortableHead sortKey="weighted" label="Weighted" cls="r" sort={sort} />
             <SortableHead sortKey="closeDate" label="Close" sort={sort} />
             <SortableHead sortKey="status" label="Status" sort={sort} />
+            {active.map(c => <SortableHead key={c.key} sortKey={c.sortKey} label={c.label} sort={sort} />)}
           </tr></thead>
           <tbody>
             {rows.map(d => (
@@ -2318,9 +2373,10 @@ function DealRegister({ deals }) {
                 <td className="r mono" style={{ fontWeight: 700 }}>{fmt.money(d.weighted)}</td>
                 <td className="muted mono" style={{ fontSize: 12.5 }}>{d.closeDate || '—'}</td>
                 <td><span className={'tag ' + d.status.toLowerCase()}>{d.status}</span></td>
+                {active.map(c => <td key={c.key} className="muted" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{c.render(d)}</td>)}
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={8} className="faint" style={{ textAlign: 'center', padding: 32 }}>No deals match this filter.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8 + active.length} className="faint" style={{ textAlign: 'center', padding: 32 }}>No deals match this filter.</td></tr>}
           </tbody>
         </table>
       </div>
