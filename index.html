@@ -490,6 +490,12 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 @keyframes fadeUp { from { transform: translateY(10px); } to { transform: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 .ico.spin { animation: spin .8s linear infinite; transform-origin: 50% 50%; }
+
+/* first-load gate — shown while the live CRM fetch is in flight */
+.boot-screen { flex: 1; min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; animation: fadeIn .2s ease; }
+.boot-spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid var(--border-2); border-top-color: var(--accent); animation: spin .7s linear infinite; }
+.boot-title { font-family: var(--font-display); font-size: 17px; font-weight: 700; color: var(--text); }
+.boot-sub { font-size: 12.5px; color: var(--text-3); }
 .btn[disabled] { opacity: .6; cursor: default; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-commit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-commit) 22%, transparent); display: inline-block; }
 .live-dot.snapshot { background: var(--text-3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-3) 18%, transparent); }
@@ -1396,7 +1402,7 @@ function Segmented({ value, options, onChange, titles }) {
   );
 }
 
-function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated, onUseCase }) {
+function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated, onUseCase, booting }) {
   return (
     <header className="topbar">
       <button className="collapse-btn" onClick={onCollapse} title="Toggle navigation"><Icon name="collapse" size={17} /></button>
@@ -1406,10 +1412,10 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
         <kbd>⌘K</kbd>
       </label>
       <div className="topbar-actions">
-        <span title={live ? 'Live from CRM' : 'Offline snapshot — refresh to pull live'}
+        <span title={booting ? 'Connecting to the CRM…' : (live ? 'Live from CRM' : 'Offline snapshot — refresh to pull live')}
           style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginRight: 4 }}>
-          <span className={'live-dot' + (live ? '' : ' snapshot')}></span>
-          {live ? 'LIVE' : 'SNAPSHOT'} · {updated}
+          <span className={'live-dot' + (booting || live ? '' : ' snapshot')}></span>
+          {booting ? 'CONNECTING…' : (live ? 'LIVE' : 'SNAPSHOT') + ' · ' + updated}
         </span>
         <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
           <Icon name="info" size={15} className="i-ico" />How it works
@@ -2585,6 +2591,19 @@ const TWEAK_DEFAULTS = {
   commitDef: 'open ≥80% only',   // 'open ≥80% only' | 'open + won'
 };
 
+// Shown instead of the pages until the first live fetch settles, so the user
+// never sees the stale offline snapshot flash before real numbers arrive.
+function BootScreen() {
+  return (
+    <div className="boot-screen">
+      <PlexLogo style={{ width: 44, height: 44 }} />
+      <div className="boot-spinner"></div>
+      <div className="boot-title">Pulling live figures from the CRM</div>
+      <div className="boot-sub">Deals, stages and owners — a few seconds.</div>
+    </div>
+  );
+}
+
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [page, setPage]           = useStateA('forecast');
@@ -2598,6 +2617,10 @@ function App() {
   const [kind, setKind]           = useStateA('Both');        // business type
   const [fyScope, setFyScope]     = useStateA('FY2026 only'); // FY scope: 'FY2026 only' | 'All years'
   const [loading, setLoading]     = useStateA(false);
+  // First paint is gated on the live fetch: until it settles we show a loading
+  // screen, never the stale offline snapshot (that only appears, labeled, if the
+  // fetch actually fails).
+  const [booted, setBooted]       = useStateA(!!window.PLEX_RAW);
   const [, bump]                  = useStateA(0);   // forces re-render after live fetch
   const [drill, setDrill]         = useStateA(null); // active drill-down payload
   const [useCaseOpen, setUseCaseOpen] = useStateA(false); // use-case map overlay
@@ -2619,6 +2642,7 @@ function App() {
       console.warn('Live forecast unavailable, showing snapshot:', e.message);
     } finally {
       setLoading(false);
+      setBooted(true);
     }
   }, []);
 
@@ -2646,7 +2670,8 @@ function App() {
 
   const pageProps = { lens, setLens, pipeline, setPipeline, fy, setFy, chartStyle: t.chartStyle };
   let view;
-  if      (page === 'forecast') view = <ForecastPage {...pageProps} />;
+  if      (!booted)             view = <BootScreen />;
+  else if (page === 'forecast') view = <ForecastPage {...pageProps} />;
   else if (page === 'overview') view = <OverviewPage {...pageProps} />;
   else if (page === 'pipeline') view = <PipelinePage {...pageProps} />;
   else if (page === 'deals')    view = <DealsPage {...pageProps} />;
@@ -2660,7 +2685,7 @@ function App() {
       <div className="main">
         <Topbar onCollapse={() => setCollapsed(c => !c)} query={query} setQuery={setQuery}
           onRefresh={refresh} loading={loading} live={!!window.PLEX_DATA.live} updated={window.PLEX_DATA.updated}
-          onUseCase={() => setUseCaseOpen(true)} />
+          onUseCase={() => setUseCaseOpen(true)} booting={!booted} />
         {view}
       </div>
 
