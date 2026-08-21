@@ -12,6 +12,7 @@ MSG="${1:-Update dashboard}"
 echo "▶ Deploying to Cloudflare Pages…"
 STAGE="$(mktemp -d)"
 cp index.html usecase.html "$STAGE"/
+cp wrangler.toml "$STAGE"/   # carries the D1 binding (goals store) into the deploy
 cp -r functions "$STAGE"/functions
 ( cd "$STAGE" && npx --yes wrangler@4 pages deploy . \
     --project-name plexapp-forecast --branch main --commit-dirty true )

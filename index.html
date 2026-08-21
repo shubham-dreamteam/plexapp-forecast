@@ -1515,45 +1515,75 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy }) {
   );
 }
 
-/* ---- quarterly revenue goals, persisted per-browser (localStorage) ----
-   The CRM has no quota, so goals are user-entered. Stored as { FY: {Q1..Q4} }. */
+/* ---- quarterly revenue goals, shared + persistent (Cloudflare D1) ----
+   The CRM has no quota, so goals are user-entered. They live server-side in
+   our own D1 store (via /api/goals), so every viewer sees the same numbers and
+   they survive reloads. Writes hit OUR store only — never the CRM. */
 function useGoals(fy) {
-  const KEY = 'plex_goals_v1';
-  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } };
-  const [all, setAll] = React.useState(read);
-  const goals = all[fy] || {};
+  const [goals, setGoals] = React.useState({});
+  const [status, setStatus] = React.useState('loading'); // loading | ready | saving | error
+  const goalsRef = React.useRef(goals);
+  goalsRef.current = goals;
+
+  // Load the shared goals for this fiscal year on mount / fy change.
+  React.useEffect(() => {
+    let alive = true;
+    setStatus('loading');
+    fetch('api/goals?fy=' + encodeURIComponent(fy), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { if (!alive) return; if (d && !d.error) { setGoals(d.goals || {}); setStatus('ready'); } else setStatus('error'); })
+      .catch(() => { if (alive) setStatus('error'); });
+    return () => { alive = false; };
+  }, [fy]);
+
   const setGoal = (q, raw) => {
     const n = Math.round(Number(String(raw).replace(/[^0-9.]/g, '')) || 0);
-    setAll(prev => {
-      const next = { ...prev, [fy]: { ...(prev[fy] || {}) } };
-      if (n > 0) next[fy][q] = n; else delete next[fy][q];
-      try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
+    const next = { ...goalsRef.current };
+    if (n > 0) next[q] = n; else delete next[q];
+    if (JSON.stringify(next) === JSON.stringify(goalsRef.current)) return; // no-op
+    setGoals(next);            // optimistic
+    setStatus('saving');
+    fetch('api/goals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fy, goals: next }),
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { if (d && !d.error) { setGoals(d.goals || {}); setStatus('ready'); } else setStatus('error'); })
+      .catch(() => setStatus('error'));
   };
+
   const entered = ['Q1', 'Q2', 'Q3', 'Q4'].filter(q => goals[q] > 0);
   const fyTarget = entered.reduce((s, q) => s + goals[q], 0);
-  return { goals, setGoal, fyTarget, enteredCount: entered.length };
+  return { goals, setGoal, fyTarget, enteredCount: entered.length, status };
 }
 
-function GoalEditor({ goals, setGoal, enteredCount, fyTarget }) {
+function GoalEditor({ goals, setGoal, enteredCount, fyTarget, status }) {
+  const saveTag = status === 'saving' ? { t: 'Saving…', c: 'var(--faint)' }
+    : status === 'error' ? { t: 'Save failed', c: 'var(--c-risk)' }
+    : status === 'loading' ? { t: 'Loading…', c: 'var(--faint)' }
+    : { t: 'Saved', c: 'var(--c-commit)' };
+  const busy = status === 'loading';
   return (
     <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
       <div className="between" style={{ marginBottom: 8 }}>
         <span className="faint" style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700 }}>Set quarterly goals</span>
         <span className="faint" style={{ fontSize: 11.5 }}>{enteredCount} of 4 entered{fyTarget ? ' · FY ' + fmt.money(fyTarget) : ''}</span>
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, opacity: busy ? 0.5 : 1 }}>
         {['Q1', 'Q2', 'Q3', 'Q4'].map(q => (
           <label key={q + '-' + (goals[q] || 0)} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span className="faint" style={{ fontSize: 10, letterSpacing: '.06em' }}>{q}</span>
-            <input className="goal-input" type="text" inputMode="numeric" defaultValue={goals[q] || ''} placeholder="$0"
+            <input className="goal-input" type="text" inputMode="numeric" defaultValue={goals[q] || ''} placeholder="$0" disabled={busy}
               onBlur={e => setGoal(q, e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
           </label>
         ))}
       </div>
-      <div className="faint" style={{ fontSize: 10.5, marginTop: 6 }}>Saved in this browser. No quota exists in the CRM.</div>
+      <div className="between" style={{ marginTop: 6 }}>
+        <span className="faint" style={{ fontSize: 10.5 }}>Shared across everyone. Saved to the dashboard, not your browser.</span>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: saveTag.c }}>{saveTag.t}</span>
+      </div>
     </div>
   );
 }
@@ -1671,7 +1701,7 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
               </div>
             )}
           </div>
-          <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={fyTarget} />
+          <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={fyTarget} status={g.status} />
         </Panel>
       </div>
 
