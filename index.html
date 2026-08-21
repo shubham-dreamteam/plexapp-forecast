@@ -2309,7 +2309,7 @@ function DrillModal({ drill, onClose }) {
             <tbody>
               {deals.map(d => (
                 <tr key={d.id}>
-                  <td style={{ fontWeight: 600, maxWidth: 220 }}>{d.name}</td>
+                  <td style={{ fontWeight: 600, minWidth: 240, maxWidth: 340 }}>{d.name}</td>
                   <td className="muted">{d.account}</td>
                   <td><StageChip stage={d.stage} /></td>
                   <td className="r mono">{fmt.money(d.amount)}</td>
