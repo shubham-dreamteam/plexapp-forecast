@@ -462,6 +462,12 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .mstat .ms-val { font-size: 22px; font-weight: 700; }
 .modal-note { padding: 12px 22px; font-size: 12.5px; color: var(--text-2); background: var(--card-2); border-bottom: 1px solid var(--border); }
 .modal-body { overflow-y: auto; padding: 4px 8px 8px; }
+/* drill column picker — add optional columns to the deal table */
+.colpick { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 10px 22px; border-bottom: 1px solid var(--border); }
+.colpick .cp-lab { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); margin-right: 4px; }
+.colpick button { font-size: 11.5px; font-weight: 600; padding: 4px 11px; border-radius: 99px; border: 1px solid var(--border); background: var(--card-2); color: var(--text-2); cursor: pointer; transition: all .12s var(--ease); }
+.colpick button:hover { border-color: var(--border-2); color: var(--text); }
+.colpick button.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 700; }
 
 /* use-case overlay (embeds the cream use-case map page) */
 .uc-overlay { position: fixed; inset: 0; z-index: 1100; background: color-mix(in srgb, #000 66%, transparent);
@@ -1035,7 +1041,7 @@ window.kpiDrill = {
 };
 
 function QuarterlyChart({ quarters, style = 'columns', tip }) {
-  const W = 760, H = 360;
+  const W = 760, H = 520;
   const padL = 58, padR = 18, padT = 34, padB = 38;
   const x0 = padL, x1 = W - padR, y0 = padT, y1 = H - padB;
   const plotW = x1 - x0, plotH = y1 - y0;
@@ -1890,7 +1896,9 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           right={<div className="legend">
             {[...SERIES].reverse().map(s => <span className="lg" key={s.key}><span className="sw" style={{ background: s.color }}></span>{s.label}</span>)}
           </div>}>
-          <QuarterlyChart quarters={chartQuarters} style={chartStyle} tip={tip} />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <QuarterlyChart quarters={chartQuarters} style={chartStyle} tip={tip} />
+          </div>
           <div className="between" style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px solid var(--border)' }}>
             <SourceNote>Live from plexapp.dreamteamcrm.ai · GET-only · {D.updated}</SourceNote>
             <span className="faint" style={{ fontSize: 12.5 }}>Σ weighted = {fmt.money(D.totals.weightedRaw)} across {D.totals.totalDeals} open deals</span>
@@ -2152,7 +2160,25 @@ function SortableHead({ sortKey, label, cls, sort }) {
 }
 
 /* ---- the universal drill-down dialog ---- */
+/* Optional drill-table columns the viewer can add. Flight dates are always shown;
+   these are the extras. The choice sticks (localStorage) across drills & visits. */
+const DRILL_OPT_COLS = [
+  { key: 'created', label: 'Created',        render: d => d.createdDate || '—' },
+  { key: 'partner', label: 'Partner agency', render: d => d.partner || '—' },
+  { key: 'owner',   label: 'Owner',          render: d => d.owner || '—' },
+  { key: 'channel', label: 'Channel',        render: d => d.channel || '—' },
+  { key: 'type',    label: 'Type',           render: d => d.dealType || '—' },
+];
+
 function DrillModal({ drill, onClose }) {
+  const [cols, setCols] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('plex_drill_cols') || '[]'); } catch (e) { return []; }
+  });
+  const toggleCol = (k) => setCols(prev => {
+    const next = prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k];
+    try { localStorage.setItem('plex_drill_cols', JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
   React.useEffect(() => {
     if (!drill) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2165,6 +2191,8 @@ function DrillModal({ drill, onClose }) {
   const deals = (drill.deals || []).slice().sort((a, b) => (b.weighted - a.weighted) || (b.amount - a.amount));
   const sum = deals.reduce((a, d) => ({ amt: a.amt + (d.amount || 0), wtd: a.wtd + (d.weighted || 0) }), { amt: 0, wtd: 0 });
   const single = deals.length === 1 ? deals[0] : null;
+  const active = DRILL_OPT_COLS.filter(c => cols.includes(c.key));
+  const flightOf = (d) => d.flightStart ? `${d.flightStart} → ${d.flightEnd || '?'}` : '—';
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -2181,16 +2209,26 @@ function DrillModal({ drill, onClose }) {
           <div className="mstat"><div className="ms-lab">Deals</div><div className="ms-val num">{deals.length}</div></div>
           <div className="mstat"><div className="ms-lab">Amount Σ</div><div className="ms-val num">{fmt.money(sum.amt)}</div></div>
           <div className="mstat"><div className="ms-lab">Weighted Σ</div><div className="ms-val num">{fmt.money(sum.wtd)}</div></div>
-          {single && <div className="mstat"><div className="ms-lab">Probability</div><div className="ms-val num">{single.probability}%</div></div>}
+          {single && <div className="mstat"><div className="ms-lab">Win probability</div><div className="ms-val num">{single.probability}%</div></div>}
           {single && <div className="mstat"><div className="ms-lab">Owner</div><div className="ms-val num" style={{ fontSize: 15 }}>{single.owner}</div></div>}
           {(drill.extraStats || []).map((s, i) => <div className="mstat" key={i}><div className="ms-lab">{s.label}</div><div className="ms-val num">{s.value}</div></div>)}
         </div>
         {drill.note && <div className="modal-note">{drill.note}</div>}
+        <div className="colpick">
+          <span className="cp-lab">Add to view</span>
+          {DRILL_OPT_COLS.map(c => (
+            <button key={c.key} className={cols.includes(c.key) ? 'on' : ''} onClick={() => toggleCol(c.key)}>
+              {cols.includes(c.key) ? '✓ ' : '+ '}{c.label}
+            </button>
+          ))}
+        </div>
         <div className="modal-body">
           <table className="tbl">
             <thead><tr>
               <th>Deal</th><th>Account</th><th>Stage</th>
-              <th className="r">Amount</th><th className="r">Prob</th><th className="r">Weighted</th><th>Close</th>
+              <th className="r">Amount</th><th className="r">Win %</th><th className="r">Weighted</th>
+              <th>Close date</th><th>Flight</th>
+              {active.map(c => <th key={c.key}>{c.label}</th>)}
             </tr></thead>
             <tbody>
               {deals.map(d => (
@@ -2202,9 +2240,11 @@ function DrillModal({ drill, onClose }) {
                   <td className="r mono">{d.probability}%</td>
                   <td className="r mono" style={{ fontWeight: 700 }}>{fmt.money(d.weighted)}</td>
                   <td className="muted mono" style={{ fontSize: 12 }}>{d.closeDate || '—'}</td>
+                  <td className="muted mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{flightOf(d)}</td>
+                  {active.map(c => <td key={c.key} className="muted" style={{ fontSize: 12.5 }}>{c.render(d)}</td>)}
                 </tr>
               ))}
-              {deals.length === 0 && <tr><td colSpan={7} className="faint" style={{ textAlign: 'center', padding: 28 }}>No underlying deals for this metric.</td></tr>}
+              {deals.length === 0 && <tr><td colSpan={8 + active.length} className="faint" style={{ textAlign: 'center', padding: 28 }}>No underlying deals for this metric.</td></tr>}
             </tbody>
           </table>
         </div>

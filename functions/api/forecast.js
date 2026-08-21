@@ -129,6 +129,7 @@ async function fetchUsers(KEY) {
 // re-enriching stage_id and owner_id into [{...}] the way the aggregation expects.
 function normalize(rec, stagesMap, usersMap) {
   const p = { ...(rec.properties || {}) };
+  p._created_at = rec.created_at || null;   // record-level metadata, not a CRM property
   if (p.stage_id != null && stagesMap[p.stage_id]) {
     const st = stagesMap[rec.properties.stage_id];
     p.stage_win_probability = st.winProbability;   // probability now lives on the STAGE
@@ -484,6 +485,7 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       partner: normPartner(sv(d, 'partner_agency')),
       channel: channelLabel(d.data && d.data.source),
       owner: ownerName(d),
+      createdDate: (d.data && d.data._created_at) ? String(d.data._created_at).slice(0, 10) : null,
       closeDate: (d.data && d.data.expected_close_date) ? String(d.data.expected_close_date).slice(0, 10) : null,
       flightStart: (d.data && d.data.flight_start_date) ? String(d.data.flight_start_date).slice(0, 10) : null,
       flightEnd: (d.data && d.data.flight_end_date) ? String(d.data.flight_end_date).slice(0, 10) : null,
