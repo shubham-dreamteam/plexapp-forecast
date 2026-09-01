@@ -1871,7 +1871,7 @@ function GoalEditor({ goals, setGoal, enteredCount, fyTarget, status }) {
     : { t: 'Saved', c: 'var(--c-commit)' };
   const busy = status === 'loading';
   return (
-    <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+    <div>
       <div className="between" style={{ marginBottom: 8 }}>
         <span className="faint" style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', fontWeight: 700 }}>Set quarterly goals</span>
         <span className="faint" style={{ fontSize: 11.5 }}>{enteredCount} of 4 entered{fyTarget ? ' · FY ' + fmt.money(fyTarget) : ''}</span>
@@ -1933,11 +1933,6 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
   const T = D.totals;
   const g = useGoals(fy || 'FY2026');   // goals are stored per fiscal year in D1
   // Target follows the quarter focus: a single quarter's goal when focused, else the FY sum.
-  const scopedTarget = D.quarterScoped ? (g.goals[D.quarter] || 0) : g.fyTarget;
-  const targetLabel = D.quarterScoped ? `${D.quarter} goal` : 'FY goal';
-  const attainment = scopedTarget ? Math.round(T.wonAmount / scopedTarget * 100) : null;
-  const gap = scopedTarget ? Math.max(0, scopedTarget - T.wonAmount) : null;
-  const coverage = (gap && gap > 0) ? Math.round(T.unweighted / gap * 10) / 10 : null;
   const chartQuarters = D.quarters.map(q => ({ ...q, target: g.goals[q.q] || 0 }));
 
   return (
@@ -1993,26 +1988,7 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           </div>
         </Panel>
 
-        <Panel title="Attainment & coverage" sub="Booked revenue vs your quarterly goals" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            {scopedTarget > 0 ? (
-              <React.Fragment>
-                <CoverageGauge value={attainment} max={100} unit="%" gaugeLabel="attainment"
-                  label="Booked" sublabel={fmt.money(T.wonAmount)} subtext={`of ${fmt.money(scopedTarget)} ${targetLabel}`}
-                  onClick={() => window.openDrill({ eyebrow: 'Booked', title: 'Closed-won deals', subtitle: `${T.wonCount} deals booked`, deals: window.__deals().filter(d => d.status === 'Won') })} />
-                <div style={{ display: 'flex', gap: 18, marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-                  <div><div className="faint" style={{ fontSize: 11.5 }}>GAP TO TARGET</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{gap > 0 ? fmt.money(gap) : 'Met ✓'}</div></div>
-                  <div><div className="faint" style={{ fontSize: 11.5 }}>PIPELINE COVERAGE</div><div className="num" style={{ fontSize: 22, fontWeight: 700, color: coverage != null ? (coverage >= 3 ? 'var(--c-commit)' : 'var(--c-risk)') : 'var(--text)' }}>{coverage != null ? coverage + '×' : (gap === 0 ? '—' : '—')}</div></div>
-                  <div><div className="faint" style={{ fontSize: 11.5 }}>WEIGHTED + BOOKED</div><div className="num" style={{ fontSize: 22, fontWeight: 700 }}>{fmt.money(T.weightedPlusBooked)}</div></div>
-                </div>
-              </React.Fragment>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 6 }}>No {D.quarterScoped ? D.quarter : 'FY'} target set</div>
-                <div className="faint" style={{ fontSize: 12.5, maxWidth: 260, margin: '0 auto' }}>Enter quarterly goals below to unlock attainment %, gap to target and pipeline coverage. Booked so far: <b style={{ color: 'var(--c-won)' }}>{fmt.money(T.wonAmount)}</b>.</div>
-              </div>
-            )}
-          </div>
+        <Panel title="Quarterly goals" sub="Shared targets · drawn as the dashed line on the quarterly chart" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <GoalEditor goals={g.goals} setGoal={g.setGoal} enteredCount={g.enteredCount} fyTarget={g.fyTarget} status={g.status} />
         </Panel>
       </div>
