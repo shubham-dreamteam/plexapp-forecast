@@ -215,7 +215,7 @@ function qBounds(year, q) {                 // q in 1..4
 // `pre` / `post` buckets for revenue flighting before/after the FY. The client
 // decides whether to exclude those (FY-only view) or fold them into Q1/Q4
 // (carryover view) — nothing is silently folded here any more.
-function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
+function allocateRaw(amount, p, fsRaw, feRaw, closeRaw, fyYear = FY) {
   const V = amount * p / 100;
   const out = { Q1: 0, Q2: 0, Q3: 0, Q4: 0, pre: 0, post: 0 };
   if (!V) return out;
@@ -225,8 +225,8 @@ function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
   if (!fs || !fe || fe < fs) {
     if (close) {
       const cy = close.getUTCFullYear();
-      if (cy > FY) out.post = V;
-      else if (cy < FY) out.pre = V;
+      if (cy > fyYear) out.post = V;
+      else if (cy < fyYear) out.pre = V;
       else out['Q' + (Math.floor(close.getUTCMonth() / 3) + 1)] = V;
     }
     return out;
@@ -238,7 +238,7 @@ function allocateRaw(amount, p, fsRaw, feRaw, closeRaw) {
       const o0 = fs > qs ? fs : qs, o1 = fe < qe ? fe : qe;
       const overlap = Math.max(0, Math.round((o1 - o0) / DAY) + 1);
       if (overlap) {
-        const key = y === FY ? 'Q' + q : (y < FY ? 'pre' : 'post');
+        const key = y === fyYear ? 'Q' + q : (y < fyYear ? 'pre' : 'post');
         out[key] += V * overlap / totalDays;
       }
     }
@@ -264,29 +264,29 @@ function reconcileAlloc(raw, V) {
   }
   return floored;
 }
-function allocFor(d) {
+function allocFor(d, fyYear = FY) {
   return reconcileAlloc(
-    allocateRaw(amt(d), prob(d), d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date),
+    allocateRaw(amt(d), prob(d), d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date, fyYear),
     amt(d) * prob(d) / 100
   );
 }
 // Booked (Closed-Won) revenue is recognised across its flight window too, at 100%
 // (full amount, not probability-weighted) — same proration as the open tiers.
-function allocForWon(d) {
+function allocForWon(d, fyYear = FY) {
   return reconcileAlloc(
-    allocateRaw(amt(d), 100, d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date),
+    allocateRaw(amt(d), 100, d.data && d.data.flight_start_date, d.data && d.data.flight_end_date, d.data && d.data.expected_close_date, fyYear),
     amt(d)
   );
 }
 
-// Does this deal's revenue window touch calendar-FY at all? Flight dates are
-// authoritative; close date is the fallback; no dates at all → keep (unknown).
-function touchesFY(d) {
+// Does this deal's revenue window touch the given calendar year at all? Flight dates
+// are authoritative; close date is the fallback; no dates at all → keep (unknown).
+function touchesFY(d, fyYear = FY) {
   const fs = parseDate(d.data && d.data.flight_start_date);
   const fe = parseDate(d.data && d.data.flight_end_date);
-  if (fs && fe && fe >= fs) return fs.getUTCFullYear() <= FY && fe.getUTCFullYear() >= FY;
+  if (fs && fe && fe >= fs) return fs.getUTCFullYear() <= fyYear && fe.getUTCFullYear() >= fyYear;
   const c = parseDate(d.data && d.data.expected_close_date);
-  if (c) return c.getUTCFullYear() === FY;
+  if (c) return c.getUTCFullYear() === fyYear;
   return true;
 }
 
@@ -338,6 +338,13 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
   // lets the client narrow unweighted pipeline to a single quarter for the quarter filter.
   const amountAllocByDeal = {};
   for (const d of deals) amountAllocByDeal[d.id] = allocForWon(d);
+  // Same maps computed against calendar 2027 — powers the FY2027 view (deals for
+  // next year are entering the CRM now; finance wants to see Q1 2027 building).
+  const alloc27ByDeal = {};
+  for (const d of OPEN) alloc27ByDeal[d.id] = allocFor(d, 2027);
+  for (const d of wonDeals) alloc27ByDeal[d.id] = allocForWon(d, 2027);
+  const amountAlloc27ByDeal = {};
+  for (const d of deals) amountAlloc27ByDeal[d.id] = allocForWon(d, 2027);
 
   // quarters: open deals into their confidence tier; won deals into a separate 'won' band
   const qInit = () => ({ commit: 0, best: 0, pipe: 0, won: 0 });
@@ -493,10 +500,13 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       dealType: dealTypeOf(sv(d, 'stage_id')),   // New | Renewal (from stage)
       band: bandOf(sv(d, 'stage_id')),           // Outreach | Semi-qualified | Qualified
       fyTouch: touchesFY(d),                     // revenue window touches calendar FY2026?
+      fyTouch27: touchesFY(d, 2027),             // …and calendar FY2027?
       alloc: open
         ? (allocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 })
         : (wonAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }),   // won: booked (weighted==amount) allocation
       amountAlloc: amountAllocByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0 },  // raw amount per quarter
+      alloc27: alloc27ByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0, pre: 0, post: 0 },
+      amountAlloc27: amountAlloc27ByDeal[d.id] || { Q1: 0, Q2: 0, Q3: 0, Q4: 0, pre: 0, post: 0 },
     };
   }).sort((a, b) => (b.open - a.open) || (b.weighted - a.weighted) || (b.amount - a.amount));
 
@@ -563,7 +573,7 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       target: null,
     },
     pipelines: ['All pipelines', 'Default Pipeline'],
-    fyOptions: ['FY2026'],
+    fyOptions: ['FY2026', 'FY2027'],
   };
 }
 

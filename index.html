@@ -1549,10 +1549,16 @@ function buildView(raw, f) {
   const quarter = f.quarter || 'Full year';
   const stageScope = f.stageScope || 'All stages';
   const kind = f.kind || 'Both';
-  const carry = !!f.carry;             // false = FY2026 only (default)
+  const carry = !!f.carry;             // false = FY-only (default)
   const includeWon = !!f.includeWon;   // commit definition
   const isFull = quarter === 'Full year';
-  const nowQ = (raw.quarters.find(q => q.now) || {}).q;
+  // Fiscal year: FY2026 (default) or FY2027 — picks which per-deal allocation maps
+  // drive the whole view. 2027 deals are entering the CRM now; finance reads Q1'27 here.
+  const is27 = f.fy === 'FY2027';
+  const fyLabel = is27 ? 'FY2027' : 'FY2026';
+  const AL = is27 ? 'alloc27' : 'alloc';
+  const AM = is27 ? 'amountAlloc27' : 'amountAlloc';
+  const nowQ = is27 ? null : (raw.quarters.find(q => q.now) || {}).q;   // "now" marker only in the current FY
   const M = 1e6, K = 1e3;
   const money = (n) => Math.abs(n) >= M ? '$' + (n / M).toFixed(2).replace(/\.?0+$/, '') + 'M' : '$' + Math.round(n / K) + 'K';
 
@@ -1569,9 +1575,12 @@ function buildView(raw, f) {
   // 1) business-type + stage-scope + FY-scope — apply to the whole pool
   const passKind = d => kind === 'Both' || (d.dealType || 'New') === kind;
   const passStage = d => stageScope !== 'Qualified' || d.band !== 'Outreach' || !d.open;  // Qualified drops cold open Leads
-  const passFY = d => carry || d.fyTouch !== false;   // FY-only: drop deals entirely outside 2026
-  const basePool = deals.filter(d => passKind(d) && passStage(d) && passFY(d))
-    .map(d => ({ ...d, _w: effQ(d.alloc), _a: effQ(d.amountAlloc) }));
+  const passFY = d => carry || (is27 ? d.fyTouch27 : d.fyTouch) !== false;   // FY-only: drop deals entirely outside the year
+  // Deals with no dates at all can't be placed in a year — they count in the current
+  // FY (2026) view only, so they aren't double-counted into 2027.
+  const passDated = d => !is27 || d.flightStart || d.closeDate;
+  const basePool = deals.filter(d => passKind(d) && passStage(d) && passFY(d) && passDated(d))
+    .map(d => ({ ...d, _w: effQ(d[AL]), _a: effQ(d[AM]) }));
 
   // 2) value projection. Deals with no dates at all allocate nowhere but still
   // belong to the full-year totals (their alloc maps are all-zero).
@@ -1690,7 +1699,7 @@ function buildView(raw, f) {
       calc: `${noValueCount} ÷ ${OPEN.length} = ${OPEN.length ? round(noValueCount / OPEN.length * 100) : 0}% unpriced   ·   blended probability = ${weightedPct}%` },
   ];
   if (wonAmt > 0) insights.splice(2, 0, {
-    tone: 'good', icon: 'up', title: `${money(wonAmt)} booked${isFull ? ' in ' + raw.fy : ' in ' + quarter}`,
+    tone: 'good', icon: 'up', title: `${money(wonAmt)} booked${isFull ? ' in ' + fyLabel : ' in ' + quarter}`,
     body: `${WON.length} closed-won deals recognise <b class="hl">${money(wonAmt)}</b> of booked revenue${kindNote}${scopeNote}. Booked sits outside the open forecast.`,
     calc: `booked = ${money(wonAmt)}   ·   weighted + booked = ${money(weighted + wonAmt)}` });
 
@@ -1716,6 +1725,7 @@ function buildView(raw, f) {
   return {
     ...raw, deals: dealSet, kpis, quarters, stages, partners, insights,
     channelsOpen, channelsBooked, channelOrder, totals,
+    fy: fyLabel, fiscalYear: is27 ? 2027 : 2026,
     quarter, stageScope, kind, quarterScoped: !isFull, carry, includeWon,
   };
 }
@@ -1767,14 +1777,21 @@ function HelpWrap({ title, card, children }) {
 function FyScopeToggle() {
   const f = React.useContext(FilterCtx);
   if (!f) return null;
+  const yr = f.fy === 'FY2027' ? 2027 : 2026;
+  const flightsLabel = yr + ' flights';
+  // fyScope state stays year-agnostic ('2026 flights' means "FY only"); only the label follows the year.
+  const value = f.fyScope === 'Carryover' ? 'Carryover' : flightsLabel;
+  const onChange = (l) => f.setFyScope(l === 'Carryover' ? 'Carryover' : '2026 flights');
   return (
     <HelpWrap title="What is carryover?" card={<React.Fragment>
-      <p>This dashboard shows 2026 money. But some deals run their ads in a different year.</p>
-      <p><b>Example:</b> an AMC deal ran its ads in Oct 2025. The KitKat deal runs Jan–Mar 2027. That money belongs to those years, not 2026.</p>
-      <p><b>2026 flights</b> (default) — leave that money out. You see a clean 2026 picture.</p>
-      <p><b>Carryover</b> — pull it in anyway: the 2025 money is shown in Q1, the 2027 money in Q4.</p>
+      <p>This dashboard is showing {yr} money. But some deals run their ads in a different year.</p>
+      {yr === 2026
+        ? <p><b>Example:</b> an AMC deal ran its ads in Oct 2025. The KitKat deal runs Jan–Mar 2027. That money belongs to those years, not 2026.</p>
+        : <p><b>Example:</b> a deal whose campaign runs Nov 2026 – Feb 2027 belongs partly to 2026. Only its 2027 share counts here.</p>}
+      <p><b>{flightsLabel}</b> (default) — leave that outside money out. You see a clean {yr} picture.</p>
+      <p><b>Carryover</b> — pull it in anyway: earlier years' money is shown in Q1, later years' in Q4.</p>
     </React.Fragment>}>
-      <Segmented value={f.fyScope} options={['2026 flights', 'Carryover']} onChange={f.setFyScope} />
+      <Segmented value={value} options={[flightsLabel, 'Carryover']} onChange={onChange} />
     </HelpWrap>
   );
 }
@@ -1916,7 +1933,7 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
   const full = lens === 'Full pipeline';
   const metric = full ? 'total' : 'weighted';
   const T = D.totals;
-  const g = useGoals('FY2026');
+  const g = useGoals(fy || 'FY2026');   // goals are stored per fiscal year in D1
   // Target follows the quarter focus: a single quarter's goal when focused, else the FY sum.
   const scopedTarget = D.quarterScoped ? (g.goals[D.quarter] || 0) : g.fyTarget;
   const targetLabel = D.quarterScoped ? `${D.quarter} goal` : 'FY goal';
@@ -2784,7 +2801,7 @@ function App() {
   // window.PLEX_DATA, so this one line makes the filters apply everywhere at once.
   const rawData = window.PLEX_RAW || window.PLEX_DATA;
   window.PLEX_DATA = buildView(rawData, {
-    quarter, stageScope, kind,
+    quarter, stageScope, kind, fy,
     carry: fyScope === 'Carryover',
     includeWon: t.commitDef === 'open + won',
   });
@@ -2800,7 +2817,7 @@ function App() {
   else                          view = <ComingPage id={page} {...pageProps} />;
 
   return (
-    <FilterCtx.Provider value={{ quarter, setQuarter, stageScope, setStageScope, kind, setKind, fyScope, setFyScope }}>
+    <FilterCtx.Provider value={{ quarter, setQuarter, stageScope, setStageScope, kind, setKind, fyScope, setFyScope, fy }}>
     <div className={`shell ${collapsed ? 'nav-collapsed' : ''}`}>
       <Sidebar page={page} setPage={setPage} collapsed={collapsed} />
       <div className="main">
