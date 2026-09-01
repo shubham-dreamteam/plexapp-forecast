@@ -146,9 +146,8 @@ button { font-family: inherit; cursor: pointer; }
   display: flex; align-items: center; gap: 10px;
   padding: 11px 12px; margin-bottom: 16px;
   background: var(--card-2); border: 1px solid var(--border);
-  border-radius: var(--r-md); cursor: pointer; transition: border-color .2s;
+  border-radius: var(--r-md);
 }
-.workspace:hover { border-color: var(--border-2); }
 .workspace .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-commit); box-shadow: 0 0 10px var(--c-commit); flex: none; }
 .workspace .ws-txt { flex: 1; min-width: 0; }
 .workspace .ws-label { font-size: 10px; letter-spacing: .14em; color: var(--text-3); font-weight: 700; }
@@ -1360,14 +1359,13 @@ function Sidebar({ page, setPage, collapsed }) {
         <div className="div"></div>
         <span className="unit">Ad Sales</span>
       </div>
-      <button className="workspace">
+      <div className="workspace">
         <span className="dot"></span>
         <span className="ws-txt">
           <div className="ws-label">WORKSPACE</div>
-          <div className="ws-name">Revenue · FY2026</div>
+          <div className="ws-name">Revenue</div>
         </span>
-        <Icon name="chevDown" size={16} className="chev" />
-      </button>
+      </div>
       <nav className="nav">
         {NAV.map(it => {
           const badge = it.id === 'deals'
