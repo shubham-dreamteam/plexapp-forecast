@@ -460,7 +460,7 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .mstat .ms-lab { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); font-weight: 700; margin-bottom: 3px; }
 .mstat .ms-val { font-size: 22px; font-weight: 700; }
 .modal-note { padding: 12px 22px; font-size: 12.5px; color: var(--text-2); background: var(--card-2); border-bottom: 1px solid var(--border); }
-.modal-body { overflow-y: auto; padding: 4px 8px 8px; }
+.modal-body { overflow-y: auto; padding: 0 8px 8px; }
 /* flights modal — period controls + running-now dot */
 .fl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 22px; border-bottom: 1px solid var(--border); }
 .fl-date { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); font-weight: 600; }
@@ -470,6 +470,9 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .fl-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--c-commit);
   box-shadow: 0 0 8px var(--c-commit); margin-right: 8px; vertical-align: 1px; }
 .fl-showing { margin-left: auto; font-size: 11.5px; color: var(--text-2); font-family: var(--font-mono); white-space: nowrap; }
+/* table headers stay pinned while the modal body scrolls */
+.modal-body .tbl thead th { position: sticky; top: 0; z-index: 5; background: var(--card);
+  box-shadow: inset 0 -1px 0 var(--border); }
 
 /* header GOALS pill + popover editor */
 .goals-dd { position: relative; }
@@ -1356,6 +1359,7 @@ const I = {
   up:       'M3 17l6-6 4 4 8-8M21 7v6M21 7h-6',
   link:     'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5',
   clock:    'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  radio:    'M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14',
   table:    'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18',
   alert:    'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01',
   refresh:  'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6',
@@ -1468,7 +1472,7 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
           {booting ? 'CONNECTING…' : (live ? 'LIVE' : 'SNAPSHOT') + ' · ' + updated}
         </span>
         <button className="btn" onClick={onFlights} title="See which deals are flighting right now, or in any window">
-          <Icon name="clock" className="ico" />Flights{activeFlights > 0 ? ` · ${activeFlights}` : ''}
+          <Icon name="radio" className="ico" />Flights Active{activeFlights > 0 ? ` · ${activeFlights}` : ''}
         </button>
         <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
           <Icon name="info" size={15} className="i-ico" />How it works
@@ -2311,11 +2315,19 @@ const flightRange = (preset, year) => {
   return [`${year}-${r[0]}`, `${year}-${r[1]}`];
 };
 
+const FLIGHTS_OPT_COLS = [
+  { key: 'win',   label: 'Win %',      sortKey: 'probability', render: d => d.probability != null ? d.probability + '%' : '—' },
+  { key: 'close', label: 'Close date', sortKey: 'closeDate',   render: d => d.closeDate || '—' },
+  ...DRILL_OPT_COLS,
+];
+
 function FlightsModal({ open, onClose }) {
   const [year, setYear] = React.useState(2026);
   const [preset, setPreset] = React.useState('Now');
   const [range, setRange] = React.useState(() => flightRange('Now', 2026));
   const sort = useSort('flightStart', 'asc');
+  const { cols, toggle } = useOptCols('plex_flights_cols');
+  const active = FLIGHTS_OPT_COLS.filter(c => cols.includes(c.key));
   React.useEffect(() => {
     if (!open) return;
     const h = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2364,6 +2376,7 @@ function FlightsModal({ open, onClose }) {
           <label className="fl-date">To <input type="date" value={end} onChange={e => setEnd(e.target.value)} /></label>
           <span className="fl-showing">Showing: {showing}</span>
         </div>
+        <ColPicker defs={FLIGHTS_OPT_COLS} cols={cols} toggle={toggle} />
         <div className="modal-stats">
           <div className="mstat"><div className="ms-lab">Deals</div><div className="ms-val num">{rows.length}</div></div>
           <div className="mstat"><div className="ms-lab">Open</div><div className="ms-val num">{sums.open}</div></div>
@@ -2382,6 +2395,7 @@ function FlightsModal({ open, onClose }) {
               <SortableHead sortKey="weighted" label="Weighted" cls="r" sort={sort} />
               <SortableHead sortKey="flightStart" label="Flight start" sort={sort} />
               <SortableHead sortKey="flightEnd" label="Flight end" sort={sort} />
+              {active.map(c => <SortableHead key={c.key} sortKey={c.sortKey} label={c.label} sort={sort} />)}
             </tr></thead>
             <tbody>
               {rows.map(d => (
@@ -2396,9 +2410,10 @@ function FlightsModal({ open, onClose }) {
                   <td className="r mono" style={{ fontWeight: 700 }}>{fmt.money(d.weighted)}</td>
                   <td className="muted mono" style={{ fontSize: 12 }}>{d.flightStart}</td>
                   <td className="muted mono" style={{ fontSize: 12 }}>{d.flightEnd}</td>
+                  {active.map(c => <td key={c.key} className="muted" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{c.render(d)}</td>)}
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={8} className="faint" style={{ textAlign: 'center', padding: 28 }}>No deals flighting in this window.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={8 + active.length} className="faint" style={{ textAlign: 'center', padding: 28 }}>No deals flighting in this window.</td></tr>}
             </tbody>
           </table>
         </div>
