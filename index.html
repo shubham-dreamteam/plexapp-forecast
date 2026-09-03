@@ -1407,7 +1407,6 @@ const NAV = [
   { id: 'pipeline', label: 'Pipeline',  icon: 'pipeline' },
   { id: 'deals',    label: 'Deals',     icon: 'deals',    badge: 45 },
   { id: 'accounts', label: 'Accounts',  icon: 'accounts' },
-  { id: 'reports',  label: 'Reports',   icon: 'reports' },
 ];
 
 function Sidebar({ page, setPage, collapsed }) {
@@ -1481,12 +1480,6 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
     .filter(d => d.status !== 'Lost' && d.flightStart && d.flightEnd && d.flightStart <= qEnd && d.flightEnd >= qStart).length;
   return (
     <header className="topbar">
-      <button className="collapse-btn" onClick={onCollapse} title="Toggle navigation"><Icon name="collapse" size={17} /></button>
-      <label className="search">
-        <Icon name="search" size={17} />
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search deals, advertisers, accounts…" />
-        <kbd>⌘K</kbd>
-      </label>
       <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
         <Icon name="info" size={15} className="i-ico" />How it works
       </button>
@@ -1861,10 +1854,6 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy, plai
     return (
       <div className="page-head">
         <div>
-          <div className="eyebrow">
-            <span className="hot">AD SALES · {D.fy}</span><span className="sep">•</span>
-            <span>UPDATED {D.updated.toUpperCase()}</span>
-          </div>
           <h1 className="title">{title}</h1>
         </div>
         <div className="head-controls">{right}</div>
@@ -1874,10 +1863,6 @@ function PageHead({ title, lens, setLens, pipeline, setPipeline, fy, setFy, plai
   return (
     <div className="page-head">
       <div>
-        <div className="eyebrow">
-          <span className="hot">AD SALES · {D.fy}</span><span className="sep">•</span>
-          <span>UPDATED {D.updated.toUpperCase()}</span>
-        </div>
         <h1 className="title">{title}</h1>
       </div>
       <div className="head-controls">
@@ -2194,8 +2179,6 @@ function PulsePage() {
       deals: diff ? diff.newlyWon.map(x => x.d) : null, t: 'Newly won', st: `Since ${sinceLabel}` },
     { l: 'LOST', v: diff ? diff.newlyLost.length : '—', s: diff ? 'moved out of pipeline' : 'collecting history', c: 'var(--c-risk)',
       deals: diff ? diff.newlyLost.map(x => x.d) : null, t: 'Newly lost', st: `Since ${sinceLabel}` },
-    { l: 'REPRICED', v: diff ? diff.repriced.length : '—', s: diff ? 'amounts changed' : 'collecting history', c: 'var(--c-pipe)',
-      deals: diff ? diff.repriced.map(x => x.d) : null, t: 'Repriced deals', st: `Since ${sinceLabel}` },
     { l: 'CLOSING ≤ 14D', v: closingSoon.length, s: overdue.length + ' overdue', c: 'var(--c-won)',
       deals: closingSoon, t: 'Closing within 14 days', st: overdue.length + ' more are overdue' },
   ];
@@ -2215,7 +2198,7 @@ function PulsePage() {
             onChange={(l) => setDays(parseInt(l.replace(/\D/g, ''), 10))} />
         </React.Fragment>} />
 
-      <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+      <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
         {kpis.map(x => (
           <KpiCard key={x.l} label={x.l} accent={x.c} value={String(x.v)} sub={x.s}
             onClick={x.deals && x.deals.length ? () => window.openDrill({ eyebrow: 'Pulse', title: x.t, subtitle: x.st, deals: x.deals }) : undefined} />
