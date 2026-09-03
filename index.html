@@ -476,8 +476,13 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .pulse-stat .ps-l { font-size: 10px; letter-spacing: .09em; font-weight: 700; color: var(--text-3); }
 .pulse-stat .ps-v { font-family: var(--font-display); font-size: 27px; font-weight: 700; margin: 3px 0 1px; }
 .pulse-stat .ps-s { font-size: 11px; color: var(--text-3); }
-.pulse-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
-  padding: 30px 14px; color: var(--text-3); font-size: 12.5px; text-align: center; flex: 1; }
+.pulse-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 26px 18px; margin: 6px 0; color: var(--text-3); font-size: 12.5px; text-align: center; flex: 1;
+  border: 1.5px dashed var(--border-2); border-radius: var(--r-md); background: var(--card-2); }
+.pulse-empty .pe-ico { width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--card); border: 1px solid var(--border); color: var(--text-3); }
+.pulse-empty .pe-main { color: var(--text-2); font-weight: 600; font-size: 13px; }
+.pulse-empty .pe-hint { font-size: 11.5px; color: var(--text-3); max-width: 300px; line-height: 1.5; }
 
 /* flights modal — period controls + running-now dot */
 .fl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 22px; border-bottom: 1px solid var(--border); }
@@ -2074,11 +2079,57 @@ function PulsePanel({ icon, color, title, sub, children, count }) {
   );
 }
 
-function PulseEmpty({ icon, children }) {
+function PulseEmpty({ icon, children, hint }) {
   return (
     <div className="pulse-empty">
-      <Icon name={icon || 'clock'} size={20} />
-      <span>{children}</span>
+      <span className="pe-ico"><Icon name={icon || 'clock'} size={17} /></span>
+      <span className="pe-main">{children}</span>
+      {hint && <span className="pe-hint">{hint}</span>}
+    </div>
+  );
+}
+
+/* Ghost waterfall — a muted preview of what the movement bridge will look like,
+   shown while there is no movement (or no history) yet. */
+function GhostWaterfall() {
+  const rows = [['New deals', 34], ['Upsized', 22], ['Moved to won', 15], ['Lost', 9]];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: .4, marginTop: 14 }} aria-hidden="true">
+      {rows.map(([l, w]) => (
+        <div key={l} style={{ display: 'grid', gridTemplateColumns: '104px 1fr 82px', gap: 12, alignItems: 'center' }}>
+          <span className="faint" style={{ fontSize: 11.5 }}>{l}</span>
+          <div style={{ height: 9, borderRadius: 99, border: '1px dashed var(--border-2)' }}>
+            <div style={{ height: '100%', width: w + '%', background: 'var(--card-2)', borderRadius: 99 }}></div>
+          </div>
+          <span className="faint num" style={{ fontSize: 12.5, textAlign: 'right' }}>—</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Sync badge — when snapshots last ran, with a hover audit trail. */
+function SyncBadge({ runs }) {
+  if (!runs || !runs.length) return null;
+  const fmtT = (iso) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const last = runs[0];
+  return (
+    <div className="helpwrap">
+      <span className="pill" style={{ cursor: 'default' }}>
+        <span className="live-dot"></span>
+        <span style={{ fontSize: 11.5 }}>Synced {fmtT(last.run_at)} · {last.source}</span>
+      </span>
+      <div className="hovercard" style={{ width: 300 }}>
+        <div className="hc-title">Sync history</div>
+        {runs.slice(0, 10).map(r => (
+          <div key={r.run_at} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 11.5, padding: '3px 0', color: 'var(--text-2)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtT(r.run_at)}</span>
+            <span>{r.source}</span>
+            <span style={{ color: r.wrote ? 'var(--c-commit)' : 'var(--text-3)', fontWeight: 600 }}>{r.wrote ? `✓ ${r.deals} deals` : 'no-op'}</span>
+          </div>
+        ))}
+        <p style={{ marginTop: 9 }}>One snapshot is written per day — by the 06:30 UTC cron or the first dashboard visit, whichever comes first. "no-op" means that day's snapshot already existed.</p>
+      </div>
     </div>
   );
 }
@@ -2122,14 +2173,22 @@ function PulsePage() {
     { label: 'Removed', v: diff.wf.removed, c: 'var(--c-risk)' },
   ].filter(x => x.v !== 0) : [];
 
-  const stats = [
-    { l: 'NEW DEALS', v: createdWk.length, s: money(createdWk.reduce((s, d) => s + d.amount, 0)), c: 'var(--accent)' },
-    { l: 'STAGE MOVES', v: diff ? diff.stageMoves.length : '—', s: diff ? 'open deals' : 'collecting', c: 'var(--c-best)' },
-    { l: 'WON', v: diff ? diff.newlyWon.length : '—', s: diff ? money(diff.newlyWon.reduce((s, x) => s + x.d.amount, 0)) : 'collecting', c: 'var(--c-commit)' },
-    { l: 'LOST', v: diff ? diff.newlyLost.length : '—', s: diff ? 'moved out' : 'collecting', c: 'var(--c-risk)' },
-    { l: 'REPRICED', v: diff ? diff.repriced.length : '—', s: diff ? 'amount changed' : 'collecting', c: 'var(--c-pipe)' },
-    { l: 'CLOSING ≤ 14D', v: closingSoon.length, s: overdue.length + ' overdue', c: 'var(--c-won)' },
+  const kpis = [
+    { l: 'NEW DEALS', v: createdWk.length, s: money(createdWk.reduce((s, d) => s + d.amount, 0)) + ' added', c: 'var(--accent)',
+      deals: createdWk, t: 'New deals', st: `Created in the last ${days} days` },
+    { l: 'STAGE MOVES', v: diff ? diff.stageMoves.length : '—', s: diff ? 'open deals advanced' : 'collecting history', c: 'var(--c-best)',
+      deals: diff ? diff.stageMoves.map(x => x.d) : null, t: 'Stage moves', st: `Since ${sinceLabel}` },
+    { l: 'WON', v: diff ? diff.newlyWon.length : '—', s: diff ? money(diff.newlyWon.reduce((s, x) => s + x.d.amount, 0)) + ' booked' : 'collecting history', c: 'var(--c-commit)',
+      deals: diff ? diff.newlyWon.map(x => x.d) : null, t: 'Newly won', st: `Since ${sinceLabel}` },
+    { l: 'LOST', v: diff ? diff.newlyLost.length : '—', s: diff ? 'moved out of pipeline' : 'collecting history', c: 'var(--c-risk)',
+      deals: diff ? diff.newlyLost.map(x => x.d) : null, t: 'Newly lost', st: `Since ${sinceLabel}` },
+    { l: 'REPRICED', v: diff ? diff.repriced.length : '—', s: diff ? 'amounts changed' : 'collecting history', c: 'var(--c-pipe)',
+      deals: diff ? diff.repriced.map(x => x.d) : null, t: 'Repriced deals', st: `Since ${sinceLabel}` },
+    { l: 'CLOSING ≤ 14D', v: closingSoon.length, s: overdue.length + ' overdue', c: 'var(--c-won)',
+      deals: closingSoon, t: 'Closing within 14 days', st: overdue.length + ' more are overdue' },
   ];
+  const nextFull = ready && base.firstSnapshotDate
+    ? new Date(new Date(base.firstSnapshotDate + 'T00:00:00Z').getTime() + days * 86400000).toISOString().slice(0, 10) : null;
 
   return (
     <div className="page">
@@ -2141,66 +2200,84 @@ function PulsePage() {
               Tracking since {base.firstSnapshotDate}
             </span>
           )}
+          <SyncBadge runs={base && base.runs} />
           <Segmented value={'Last ' + days + ' days'} options={['Last 7 days', 'Last 14 days', 'Last 30 days']}
             onChange={(l) => setDays(parseInt(l.replace(/\D/g, ''), 10))} />
         </React.Fragment>} />
+
+      <div className="kpi-row" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+        {kpis.map(x => (
+          <KpiCard key={x.l} label={x.l} accent={x.c} value={String(x.v)} sub={x.s}
+            onClick={x.deals && x.deals.length ? () => window.openDrill({ eyebrow: 'Pulse', title: x.t, subtitle: x.st, deals: x.deals }) : undefined} />
+        ))}
+      </div>
 
       <Panel title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           <span className="p-ico" style={{ color: 'var(--accent)' }}><Icon name="up" size={15} /></span>Pipeline movement
         </span>}
         sub={ready ? `Open weighted pipeline vs ${base.baselineDate}${base.partial ? ' · oldest snapshot available' : ''}` : `Open weighted pipeline vs ${days} days ago`}>
-        <div className="grid" style={{ gridTemplateColumns: '1.3fr 1fr', gap: 26, alignItems: 'center' }}>
+        {diff ? (
           <div>
-            {diff ? (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap', marginBottom: 18 }}>
-                  <span className="num" style={{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 700 }}>{money(diff.endW)}</span>
-                  <span className={'delta ' + (diff.endW >= diff.startW ? 'up' : 'down')} style={{ fontSize: 13 }}>
-                    {diff.endW >= diff.startW ? '+' : ''}{money(diff.endW - diff.startW)}
-                  </span>
-                  <span className="faint" style={{ fontSize: 12 }}>was {money(diff.startW)} on {base.baselineDate}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {wfItems.map(x => {
-                    const max = Math.max(...wfItems.map(i => Math.abs(i.v)), 1);
-                    return (
-                      <div key={x.label} style={{ display: 'grid', gridTemplateColumns: '104px 1fr 82px', gap: 12, alignItems: 'center' }}>
-                        <span className="faint" style={{ fontSize: 11.5 }}>{x.label}</span>
-                        <div style={{ height: 9, borderRadius: 99, background: 'var(--card-2)', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: Math.max(3, Math.abs(x.v) / max * 100) + '%', background: x.c, borderRadius: 99 }}></div>
-                        </div>
-                        <span className="num" style={{ fontSize: 12.5, fontWeight: 700, textAlign: 'right', color: x.v >= 0 ? 'var(--c-commit)' : 'var(--c-risk)' }}>{x.v >= 0 ? '+' : ''}{money(x.v)}</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap', marginBottom: 16 }}>
+              <span className="num" style={{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 700 }}>{money(diff.endW)}</span>
+              <span className={'delta ' + (diff.endW >= diff.startW ? 'up' : 'down')} style={{ fontSize: 13 }}>
+                {diff.endW >= diff.startW ? '+' : ''}{money(diff.endW - diff.startW)}
+              </span>
+              <span className="faint" style={{ fontSize: 12 }}>was {money(diff.startW)} on {base.baselineDate}</span>
+            </div>
+            {wfItems.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
+                {wfItems.map(x => {
+                  const max = Math.max(...wfItems.map(i => Math.abs(i.v)), 1);
+                  return (
+                    <div key={x.label} style={{ display: 'grid', gridTemplateColumns: '104px 1fr 82px', gap: 12, alignItems: 'center' }}>
+                      <span className="faint" style={{ fontSize: 11.5 }}>{x.label}</span>
+                      <div style={{ height: 9, borderRadius: 99, background: 'var(--card-2)', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: Math.max(3, Math.abs(x.v) / max * 100) + '%', background: x.c, borderRadius: 99 }}></div>
                       </div>
-                    );
-                  })}
-                  {wfItems.length === 0 && <PulseEmpty icon="spark">No pipeline movement since {base.baselineDate}.</PulseEmpty>}
-                </div>
+                      <span className="num" style={{ fontSize: 12.5, fontWeight: 700, textAlign: 'right', color: x.v >= 0 ? 'var(--c-commit)' : 'var(--c-risk)' }}>{x.v >= 0 ? '+' : ''}{money(x.v)}</span>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
-              <PulseEmpty icon="clock">{collecting ? 'Collecting history — daily snapshots started today. Real comparisons unlock as days accumulate.' : 'Loading snapshot…'}</PulseEmpty>
+              <div style={{ maxWidth: 720 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <span className="p-ico" style={{ color: 'var(--text-3)' }}><Icon name="clock" size={15} /></span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13.5 }}>Watching for movement</div>
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      Snapshots began {base.firstSnapshotDate}. Changes appear as soon as tomorrow{nextFull ? `; the full ${days}-day picture lands ${nextFull}` : ''}.
+                    </div>
+                  </div>
+                </div>
+                <GhostWaterfall />
+              </div>
             )}
           </div>
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {stats.map(x => (
-              <div key={x.l} className="pulse-stat" style={{ '--ps-accent': x.c }}>
-                <div className="ps-l">{x.l}</div>
-                <div className="ps-v num">{x.v}</div>
-                <div className="ps-s">{x.s}</div>
+        ) : (
+          <div style={{ maxWidth: 720 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="p-ico" style={{ color: 'var(--text-3)' }}><Icon name="clock" size={15} /></span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{collecting ? 'Collecting history' : 'Loading snapshot…'}</div>
+                {collecting && <div className="faint" style={{ fontSize: 12 }}>Daily snapshots started today — the 06:30 UTC cron keeps them running even when nobody visits.</div>}
               </div>
-            ))}
+            </div>
+            <GhostWaterfall />
           </div>
-        </div>
+        )}
       </Panel>
 
       <div className="grid col-2" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch', marginTop: 'var(--gap)' }}>
         <PulsePanel icon="deals" color="var(--accent)" title="New deals" sub={`Created in the last ${days} days`} count={createdWk.length}>
           {createdWk.slice(0, 8).map(d => <PulseRow key={d.id} d={d} note={'added ' + d.createdDate} onClick={() => drill1(d)} />)}
-          {createdWk.length === 0 && <PulseEmpty icon="deals">No new deals in this window.</PulseEmpty>}
+          {createdWk.length === 0 && <PulseEmpty icon="deals" hint="Deals appear here the moment they are created in DreamTeam.">No new deals in this window.</PulseEmpty>}
         </PulsePanel>
         <PulsePanel icon="layers" color="var(--c-best)" title="Stage moves" sub={ready ? `Since ${base.baselineDate}` : 'Needs snapshot history'} count={diff ? diff.stageMoves.length : null}>
           {diff && diff.stageMoves.slice(0, 8).map(({ d, b }) => <PulseRow key={d.id} d={d} note={`${b.stage} → ${d.stage}`} noteColor="var(--accent)" onClick={() => drill1(d)} />)}
-          {diff && diff.stageMoves.length === 0 && <PulseEmpty icon="layers">No stage moves since {base.baselineDate}.</PulseEmpty>}
-          {!diff && <PulseEmpty icon="clock">{collecting ? 'Snapshots started today — moves show from tomorrow.' : 'Loading…'}</PulseEmpty>}
+          {diff && diff.stageMoves.length === 0 && <PulseEmpty icon="layers" hint="When a deal advances (Lead → Discovery → Media Plan …) it shows here with its from → to path.">No stage moves since {base.baselineDate}.</PulseEmpty>}
+          {!diff && <PulseEmpty icon="clock" hint="Moves are detected by comparing daily snapshots, so the first ones can appear tomorrow.">{collecting ? 'Snapshots started today.' : 'Loading…'}</PulseEmpty>}
         </PulsePanel>
       </div>
 
@@ -2209,25 +2286,25 @@ function PulsePage() {
           count={diff ? diff.newlyWon.length + diff.newlyLost.length : null}>
           {diff && diff.newlyWon.map(({ d }) => <PulseRow key={d.id} d={d} note="WON" noteColor="var(--c-commit)" onClick={() => drill1(d)} />)}
           {diff && diff.newlyLost.map(({ d }) => <PulseRow key={d.id} d={d} note="LOST" noteColor="var(--c-risk)" onClick={() => drill1(d)} />)}
-          {diff && diff.newlyWon.length + diff.newlyLost.length === 0 && <PulseEmpty icon="target">Nothing closed since {base.baselineDate}.</PulseEmpty>}
-          {!diff && <PulseEmpty icon="clock">{collecting ? 'Collecting history.' : 'Loading…'}</PulseEmpty>}
+          {diff && diff.newlyWon.length + diff.newlyLost.length === 0 && <PulseEmpty icon="target" hint="Deals marked Closed Won or Closed Lost land here with their booked value.">Nothing closed since {base.baselineDate}.</PulseEmpty>}
+          {!diff && <PulseEmpty icon="clock" hint="Wins and losses are detected from tomorrow onwards, once there are two snapshots to compare.">{collecting ? 'Collecting history.' : 'Loading…'}</PulseEmpty>}
         </PulsePanel>
         <PulsePanel icon="alert" color="var(--c-risk)" title="Needs attention" sub="Slipped closes · overdue · gone quiet" count={(diff ? diff.slipped.length : 0) + stale.length + overdue.length}>
           {diff && diff.slipped.slice(0, 4).map(({ d, b }) => <PulseRow key={'s' + d.id} d={d} note={`close slipped ${b.close_date} → ${d.closeDate}`} noteColor="var(--c-best)" onClick={() => drill1(d)} />)}
           {overdue.slice(0, 4).map(d => <PulseRow key={'o' + d.id} d={d} note={'close date passed · ' + d.closeDate} noteColor="var(--c-risk)" onClick={() => drill1(d)} />)}
           {stale.slice(0, 4).map(d => <PulseRow key={'t' + d.id} d={d} note={'no activity since ' + d.lastActivity} noteColor="var(--text-3)" onClick={() => drill1(d)} />)}
-          {(!diff || diff.slipped.length === 0) && overdue.length === 0 && stale.length === 0 && <PulseEmpty icon="target">Nothing needs attention. Clean week.</PulseEmpty>}
+          {(!diff || diff.slipped.length === 0) && overdue.length === 0 && stale.length === 0 && <PulseEmpty icon="target" hint="Slipped close dates, overdue deals and deals with 30+ quiet days would show here.">Nothing needs attention. Clean week ✓</PulseEmpty>}
         </PulsePanel>
       </div>
 
       <div className="grid col-2" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch', marginTop: 'var(--gap)' }}>
         <PulsePanel icon="radio" color="var(--c-commit)" title="Flights starting" sub="Next 7 days" count={flightsStarting.length}>
           {flightsStarting.slice(0, 6).map(d => <PulseRow key={d.id} d={d} note={'starts ' + d.flightStart} noteColor="var(--c-commit)" onClick={() => drill1(d)} />)}
-          {flightsStarting.length === 0 && <PulseEmpty icon="radio">No flights starting this week.</PulseEmpty>}
+          {flightsStarting.length === 0 && <PulseEmpty icon="radio" hint="Campaigns whose flight window begins within 7 days appear here.">No flights starting this week.</PulseEmpty>}
         </PulsePanel>
         <PulsePanel icon="radio" color="var(--c-best)" title="Flights ending" sub="Next 7 days" count={flightsEnding.length}>
           {flightsEnding.slice(0, 6).map(d => <PulseRow key={d.id} d={d} note={'ends ' + d.flightEnd} noteColor="var(--c-best)" onClick={() => drill1(d)} />)}
-          {flightsEnding.length === 0 && <PulseEmpty icon="radio">No flights ending this week.</PulseEmpty>}
+          {flightsEnding.length === 0 && <PulseEmpty icon="radio" hint="Campaigns wrapping up within 7 days appear here — good renewal triggers.">No flights ending this week.</PulseEmpty>}
         </PulsePanel>
       </div>
     </div>

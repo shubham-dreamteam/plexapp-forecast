@@ -1,0 +1,14 @@
+# Daily snapshot cron — writes the deal snapshot into the shared D1 even when
+# nobody opens the dashboard. Deployed separately from the Pages project:
+#   cd cron && npx wrangler@4.128.0 deploy
+name = "plexapp-snapshot-cron"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[triggers]
+crons = ["30 6 * * *"]   # 06:30 UTC daily (23:30 PT / 12:00 IST)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "plexapp-forecast-db"
+database_id = "eedc010d-4343-4e0a-bdcb-dbf6e83533e7"

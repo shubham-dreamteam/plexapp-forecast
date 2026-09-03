@@ -599,6 +599,11 @@ async function snapshotDeals(DB, dealRows) {
     ));
     stmts.push(DB.prepare('DELETE FROM deal_snapshots WHERE snapshot_date < ?')
       .bind(new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)));
+    // audit trail for the Pulse sync badge
+    stmts.push(DB.prepare('INSERT OR IGNORE INTO sync_runs (run_at, snapshot_date, source, deals, wrote) VALUES (?,?,?,?,1)')
+      .bind(new Date().toISOString(), today, 'visit', dealRows.length));
+    stmts.push(DB.prepare('DELETE FROM sync_runs WHERE run_at < ?')
+      .bind(new Date(Date.now() - 90 * 86400000).toISOString()));
     await DB.batch(stmts);
   } catch (e) { /* snapshots are best-effort; the forecast must never fail on them */ }
 }
