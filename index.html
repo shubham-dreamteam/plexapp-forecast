@@ -461,6 +461,15 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .mstat .ms-val { font-size: 22px; font-weight: 700; }
 .modal-note { padding: 12px 22px; font-size: 12.5px; color: var(--text-2); background: var(--card-2); border-bottom: 1px solid var(--border); }
 .modal-body { overflow-y: auto; padding: 4px 8px 8px; }
+/* flights modal — period controls + running-now dot */
+.fl-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 22px; border-bottom: 1px solid var(--border); }
+.fl-date { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); font-weight: 600; }
+.fl-date input { background: var(--card-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 9px;
+  color: var(--text); font-family: var(--font-mono); font-size: 12px; outline: none; color-scheme: dark; }
+.fl-date input:focus { border-color: var(--accent); }
+.fl-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--c-commit);
+  box-shadow: 0 0 8px var(--c-commit); margin-right: 8px; vertical-align: 1px; }
+
 /* header GOALS pill + popover editor */
 .goals-dd { position: relative; }
 .goals-dd .gd-label { font-size: 10.5px; letter-spacing: .12em; font-weight: 700; color: var(--text-3); }
@@ -1439,7 +1448,10 @@ function Segmented({ value, options, onChange, titles }) {
   );
 }
 
-function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated, onUseCase, booting }) {
+function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated, onUseCase, onFlights, booting }) {
+  const t = new Date().toISOString().slice(0, 10);
+  const activeFlights = (((window.PLEX_RAW || window.PLEX_DATA || {}).deals) || [])
+    .filter(d => d.status !== 'Lost' && d.flightStart && d.flightEnd && d.flightStart <= t && d.flightEnd >= t).length;
   return (
     <header className="topbar">
       <button className="collapse-btn" onClick={onCollapse} title="Toggle navigation"><Icon name="collapse" size={17} /></button>
@@ -1454,6 +1466,9 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
           <span className={'live-dot' + (booting || live ? '' : ' snapshot')}></span>
           {booting ? 'CONNECTING…' : (live ? 'LIVE' : 'SNAPSHOT') + ' · ' + updated}
         </span>
+        <button className="btn" onClick={onFlights} title="See which deals are flighting right now, or in any window">
+          <Icon name="clock" className="ico" />Flights{activeFlights > 0 ? ` · ${activeFlights}` : ''}
+        </button>
         <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
           <Icon name="info" size={15} className="i-ico" />How it works
         </button>
@@ -2278,6 +2293,114 @@ function ColPicker({ defs, cols, toggle, inline }) {
   );
 }
 
+/* ============================================================
+   Flight schedule — which deals are actually flighting in a window.
+   Opens from the topbar. Pick a year (2026/2027), a preset period
+   (Now / Q1–Q4 / H1 / H2 / Full year) or custom start–end dates;
+   lists every non-lost deal whose flight window overlaps the range.
+   ============================================================ */
+const FLIGHT_PRESETS = ['Now', 'Q1', 'Q2', 'Q3', 'Q4', 'H1', 'H2', 'Full year'];
+const flightRange = (preset, year) => {
+  const today = new Date().toISOString().slice(0, 10);
+  if (preset === 'Now') return [today, today];
+  const r = {
+    'Q1': ['01-01', '03-31'], 'Q2': ['04-01', '06-30'], 'Q3': ['07-01', '09-30'], 'Q4': ['10-01', '12-31'],
+    'H1': ['01-01', '06-30'], 'H2': ['07-01', '12-31'], 'Full year': ['01-01', '12-31'],
+  }[preset];
+  return [`${year}-${r[0]}`, `${year}-${r[1]}`];
+};
+
+function FlightsModal({ open, onClose }) {
+  const [year, setYear] = React.useState(2026);
+  const [preset, setPreset] = React.useState('Now');
+  const [range, setRange] = React.useState(() => flightRange('Now', 2026));
+  const sort = useSort('flightStart', 'asc');
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', h); document.body.style.overflow = ''; };
+  }, [open, onClose]);
+  if (!open) return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const pickPreset = (p) => { setPreset(p); setRange(flightRange(p, year)); };
+  const pickYear = (y) => { const p = preset === 'Now' || preset === 'Custom' ? 'Full year' : preset; setYear(y); setPreset(p); setRange(flightRange(p, y)); };
+  const [start, end] = range;
+  const setStart = (v) => { if (v) { setPreset('Custom'); setRange([v, end < v ? v : end]); } };
+  const setEnd = (v) => { if (v) { setPreset('Custom'); setRange([start > v ? v : start, v]); } };
+
+  const pool = ((window.PLEX_RAW && window.PLEX_RAW.deals) || (window.PLEX_DATA && window.PLEX_DATA.deals) || []);
+  const rows = pool
+    .filter(d => d.status !== 'Lost' && d.flightStart && d.flightEnd && d.flightStart <= end && d.flightEnd >= start)
+    .slice().sort(sort.sorter);
+  const sums = rows.reduce((a, d) => ({
+    amt: a.amt + (d.amount || 0), wtd: a.wtd + (d.weighted || 0),
+    open: a.open + (d.open ? 1 : 0), won: a.won + (d.status === 'Won' ? 1 : 0),
+  }), { amt: 0, wtd: 0, open: 0, won: 0 });
+  const runningNow = (d) => d.flightStart <= today && d.flightEnd >= today;
+
+  return (
+    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <div>
+            <div className="modal-eyebrow">Flight schedule</div>
+            <h3 className="modal-title">Active flights</h3>
+            <div className="modal-sub">{rows.length} deals flighting {preset === 'Now' ? 'right now' : `${start} → ${end}`}</div>
+          </div>
+          <button className="modal-x" onClick={onClose} aria-label="Close"><Icon name="close" size={17} /></button>
+        </div>
+        <div className="fl-controls">
+          <div className="seg-mini">{[2026, 2027].map(y => <button key={y} className={year === y && preset !== 'Now' ? 'on' : ''} onClick={() => pickYear(y)}>{y}</button>)}</div>
+          <div className="seg-mini">{FLIGHT_PRESETS.map(p => <button key={p} className={preset === p ? 'on' : ''} onClick={() => pickPreset(p)}>{p}</button>)}</div>
+          <label className="fl-date">From <input type="date" value={start} onChange={e => setStart(e.target.value)} /></label>
+          <label className="fl-date">To <input type="date" value={end} onChange={e => setEnd(e.target.value)} /></label>
+        </div>
+        <div className="modal-stats">
+          <div className="mstat"><div className="ms-lab">Deals</div><div className="ms-val num">{rows.length}</div></div>
+          <div className="mstat"><div className="ms-lab">Open</div><div className="ms-val num">{sums.open}</div></div>
+          <div className="mstat"><div className="ms-lab">Won</div><div className="ms-val num">{sums.won}</div></div>
+          <div className="mstat"><div className="ms-lab">Amount Σ</div><div className="ms-val num">{fmt.money(sums.amt)}</div></div>
+          <div className="mstat"><div className="ms-lab">Weighted Σ</div><div className="ms-val num">{fmt.money(sums.wtd)}</div></div>
+        </div>
+        <div className="modal-body">
+          <table className="tbl">
+            <thead><tr>
+              <SortableHead sortKey="name" label="Deal" sort={sort} />
+              <SortableHead sortKey="account" label="Account" sort={sort} />
+              <SortableHead sortKey="status" label="Status" sort={sort} />
+              <SortableHead sortKey="stage" label="Stage" sort={sort} />
+              <SortableHead sortKey="amount" label="Amount" cls="r" sort={sort} />
+              <SortableHead sortKey="weighted" label="Weighted" cls="r" sort={sort} />
+              <SortableHead sortKey="flightStart" label="Flight start" sort={sort} />
+              <SortableHead sortKey="flightEnd" label="Flight end" sort={sort} />
+            </tr></thead>
+            <tbody>
+              {rows.map(d => (
+                <tr key={d.id}>
+                  <td style={{ fontWeight: 600, minWidth: 220, maxWidth: 340 }}>
+                    {runningNow(d) && <span className="fl-live" title="Flighting today"></span>}{d.name}
+                  </td>
+                  <td className="muted">{d.account}</td>
+                  <td><span className={'tag ' + d.status.toLowerCase()}>{d.status}</span></td>
+                  <td><StageChip stage={d.stage} /></td>
+                  <td className="r mono">{fmt.money(d.amount)}</td>
+                  <td className="r mono" style={{ fontWeight: 700 }}>{fmt.money(d.weighted)}</td>
+                  <td className="muted mono" style={{ fontSize: 12 }}>{d.flightStart}</td>
+                  <td className="muted mono" style={{ fontSize: 12 }}>{d.flightEnd}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={8} className="faint" style={{ textAlign: 'center', padding: 28 }}>No deals flighting in this window.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DrillModal({ drill, onClose }) {
   const { cols, toggle: toggleCol } = useOptCols('plex_drill_cols');
   const sort = useSort('weighted', 'desc');
@@ -2710,7 +2833,7 @@ function DealQuarterTable({ deals }) {
   );
 }
 
-Object.assign(window, { ForecastPage, OverviewPage, PipelinePage, DealsPage, AccountsPage, ComingPage, PageHead, PartnerConc, DealRegister, KanbanBoard, StageChip, DrillModal, DealQuarterTable, UseCaseModal, RecognitionTimeline });
+Object.assign(window, { ForecastPage, OverviewPage, PipelinePage, DealsPage, AccountsPage, ComingPage, PageHead, PartnerConc, DealRegister, KanbanBoard, StageChip, DrillModal, DealQuarterTable, UseCaseModal, RecognitionTimeline, FlightsModal });
   </script>
 
   <!-- ── app.jsx ── -->
@@ -2769,6 +2892,7 @@ function App() {
   const [, bump]                  = useStateA(0);   // forces re-render after live fetch
   const [drill, setDrill]         = useStateA(null); // active drill-down payload
   const [useCaseOpen, setUseCaseOpen] = useStateA(false); // use-case map overlay
+  const [flightsOpen, setFlightsOpen] = useStateA(false); // active-flights schedule dialog
 
   useEffectA(() => { window.__openDrill = setDrill; return () => { window.__openDrill = null; }; }, []);
 
@@ -2830,12 +2954,13 @@ function App() {
       <div className="main">
         <Topbar onCollapse={() => setCollapsed(c => !c)} query={query} setQuery={setQuery}
           onRefresh={refresh} loading={loading} live={!!window.PLEX_DATA.live} updated={window.PLEX_DATA.updated}
-          onUseCase={() => setUseCaseOpen(true)} booting={!booted} />
+          onUseCase={() => setUseCaseOpen(true)} onFlights={() => setFlightsOpen(true)} booting={!booted} />
         {view}
       </div>
 
       <DrillModal drill={drill} onClose={() => setDrill(null)} />
       <UseCaseModal open={useCaseOpen} onClose={() => setUseCaseOpen(false)} />
+      <FlightsModal open={flightsOpen} onClose={() => setFlightsOpen(false)} />
 
       <TweaksPanel title="Tweaks">
         <TweakSection label="Direction" />
