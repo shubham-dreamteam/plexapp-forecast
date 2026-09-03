@@ -1378,6 +1378,7 @@ function Icon({ name, size = 18, className = '' }) {
 
 const NAV = [
   { id: 'forecast', label: 'Forecast',  icon: 'forecast' },
+  { id: 'pulse',    label: 'Pulse',     icon: 'spark' },
   { id: 'pipeline', label: 'Pipeline',  icon: 'pipeline' },
   { id: 'deals',    label: 'Deals',     icon: 'deals',    badge: 45 },
   { id: 'accounts', label: 'Accounts',  icon: 'accounts' },
@@ -1447,9 +1448,12 @@ function Segmented({ value, options, onChange, titles }) {
 }
 
 function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated, onUseCase, onFlights, booting }) {
-  const t = new Date().toISOString().slice(0, 10);
+  // Count deals flighting in the CURRENT QUARTER — matches what the dialog opens to.
+  const _n = new Date(), _y = _n.getFullYear(), _q = Math.floor(_n.getMonth() / 3);
+  const qStart = [`${_y}-01-01`, `${_y}-04-01`, `${_y}-07-01`, `${_y}-10-01`][_q];
+  const qEnd   = [`${_y}-03-31`, `${_y}-06-30`, `${_y}-09-30`, `${_y}-12-31`][_q];
   const activeFlights = (((window.PLEX_RAW || window.PLEX_DATA || {}).deals) || [])
-    .filter(d => d.status !== 'Lost' && d.flightStart && d.flightEnd && d.flightStart <= t && d.flightEnd >= t).length;
+    .filter(d => d.status !== 'Lost' && d.flightStart && d.flightEnd && d.flightStart <= qEnd && d.flightEnd >= qStart).length;
   return (
     <header className="topbar">
       <button className="collapse-btn" onClick={onCollapse} title="Toggle navigation"><Icon name="collapse" size={17} /></button>
@@ -1467,7 +1471,7 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
           <span className={'live-dot' + (booting || live ? '' : ' snapshot')}></span>
           {booting ? 'CONNECTING…' : (live ? 'LIVE' : 'SNAPSHOT') + ' · ' + updated}
         </span>
-        <button className="btn" onClick={onFlights} title="See which deals are flighting right now, or in any window">
+        <button className="btn" onClick={onFlights} title="Deals flighting this quarter — click for any window">
           <Icon name="radio" className="ico" />Flights Active{activeFlights > 0 ? ` · ${activeFlights}` : ''}
         </button>
         <button className="btn" onClick={onRefresh} disabled={loading} title="Pull the latest figures from the CRM">
@@ -1975,6 +1979,228 @@ function ChannelMix({ open, booked }) {
   );
 }
 
+/* ============================================================
+   PULSE — what changed in the pipeline, week over week.
+   Live-computable widgets (new deals, closing soon, flights, stale)
+   read the current pool; the diff widgets (stage moves, repricings,
+   won/lost, the waterfall) compare against a daily D1 snapshot
+   served by /api/changes. Page filters deliberately do NOT apply —
+   Pulse is about change, not scoped views.
+   ============================================================ */
+const isoDay = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+
+function pulseDiff(deals, base) {
+  const byId = new Map((base.rows || []).map(r => [String(r.deal_id), r]));
+  const curIds = new Set(deals.map(d => String(d.id)));
+  const paired = deals.filter(d => byId.has(String(d.id))).map(d => ({ d, b: byId.get(String(d.id)) }));
+  const newDeals = deals.filter(d => !byId.has(String(d.id)));
+  const gone = (base.rows || []).filter(r => !curIds.has(String(r.deal_id)));
+  const stageMoves = paired.filter(({ d, b }) => b.stage !== d.stage && d.status === 'Open' && b.status === 'Open');
+  const newlyWon = paired.filter(({ d, b }) => d.status === 'Won' && b.status !== 'Won');
+  const newlyLost = paired.filter(({ d, b }) => d.status === 'Lost' && b.status !== 'Lost');
+  const repriced = paired.filter(({ d, b }) => Number(b.amount) !== d.amount && d.status === 'Open' && b.status === 'Open');
+  const slipped = paired.filter(({ d, b }) => d.open && b.close_date && d.closeDate && d.closeDate > b.close_date);
+  // week-over-week weighted waterfall (open pipeline)
+  const bOpen = (base.rows || []).filter(r => r.status === 'Open');
+  const startW = bOpen.reduce((s, r) => s + (r.weighted || 0), 0);
+  const endW = deals.filter(d => d.open).reduce((s, d) => s + d.weighted, 0);
+  const wf = { added: 0, up: 0, won: 0, lost: 0, down: 0, removed: 0 };
+  for (const d of newDeals) if (d.open) wf.added += d.weighted;
+  for (const { d, b } of paired) {
+    if (b.status !== 'Open') continue;
+    if (d.status === 'Won') wf.won -= b.weighted || 0;
+    else if (d.status === 'Lost') wf.lost -= b.weighted || 0;
+    else { const delta = d.weighted - (b.weighted || 0); if (delta > 0) wf.up += delta; else wf.down += delta; }
+  }
+  for (const r of gone) if (r.status === 'Open') wf.removed -= r.weighted || 0;
+  return { newDeals, gone, stageMoves, newlyWon, newlyLost, repriced, slipped, startW, endW, wf };
+}
+
+function PulseRow({ d, note, noteColor, onClick }) {
+  return (
+    <div className="conc-row clickable" onClick={onClick}>
+      <div style={{ minWidth: 0, gridColumn: '1 / span 2' }}>
+        <div className="conc-name">{d.name}</div>
+        <div className="conc-sub">{d.account} · {d.stage}{note ? <span style={{ color: noteColor || 'var(--text-2)' }}> · {note}</span> : null}</div>
+      </div>
+      <span className="conc-val num">{fmt.money(d.amount)}</span>
+    </div>
+  );
+}
+
+function PulsePanel({ title, sub, children, count }) {
+  return (
+    <Panel title={title} sub={sub} right={count != null ? <span className="num" style={{ fontSize: 20, fontWeight: 700 }}>{count}</span> : null}
+      style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className="conc" style={{ flex: 1 }}>{children}</div>
+    </Panel>
+  );
+}
+
+function PulseEmpty({ children }) {
+  return <div className="faint" style={{ padding: '10px 0', fontSize: 12.5 }}>{children}</div>;
+}
+
+function PulsePage({ lens, setLens, pipeline, setPipeline, fy, setFy }) {
+  const raw = window.PLEX_RAW || window.PLEX_DATA;
+  const deals = raw.deals || [];
+  const [base, setBase] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    fetch('api/changes?days=7', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { if (alive) setBase(d); })
+      .catch(() => { if (alive) setBase({ error: true, rows: [] }); });
+    return () => { alive = false; };
+  }, []);
+
+  const today = isoDay(0), wkAgo = isoDay(-7), in14 = isoDay(14), in7 = isoDay(7), staleCut = isoDay(-30);
+  const open = deals.filter(d => d.open);
+  // live-computable
+  const createdWk = deals.filter(d => d.createdDate && d.createdDate >= wkAgo);
+  const closingSoon = open.filter(d => d.closeDate && d.closeDate >= today && d.closeDate <= in14);
+  const overdue = open.filter(d => d.closeDate && d.closeDate < today);
+  const flightsStarting = deals.filter(d => d.status !== 'Lost' && d.flightStart && d.flightStart >= today && d.flightStart <= in7);
+  const flightsEnding = deals.filter(d => d.status !== 'Lost' && d.flightEnd && d.flightEnd >= today && d.flightEnd <= in7);
+  const stale = open.filter(d => d.lastActivity && d.lastActivity < staleCut);
+  // snapshot diff
+  const ready = base && !base.error && base.baselineDate;
+  const diff = ready ? pulseDiff(deals, base) : null;
+  const collecting = base && (base.partial || !base.baselineDate);
+  const drill1 = (d) => window.openDrill({ eyebrow: 'Deal', title: d.name, subtitle: `${d.account} · ${d.stage}`, deals: [d] });
+  const money = fmt.money;
+
+  // waterfall bar segments (positive greens, negative reds)
+  const wfItems = diff ? [
+    { label: 'New deals', v: diff.wf.added, c: 'var(--c-commit)' },
+    { label: 'Upsized', v: diff.wf.up, c: 'var(--c-commit)' },
+    { label: 'Moved to won', v: diff.wf.won, c: 'var(--c-won)' },
+    { label: 'Lost', v: diff.wf.lost, c: 'var(--c-risk)' },
+    { label: 'Downsized', v: diff.wf.down, c: 'var(--c-risk)' },
+    { label: 'Removed', v: diff.wf.removed, c: 'var(--c-risk)' },
+  ].filter(x => x.v !== 0) : [];
+
+  return (
+    <div className="page">
+      <PageHead title="Pulse" lens={lens} setLens={setLens} pipeline={pipeline} setPipeline={setPipeline} fy={fy} setFy={setFy} />
+
+      <div className="grid col-2" style={{ gridTemplateColumns: '1.65fr 1fr', alignItems: 'stretch' }}>
+        <Panel title="Week over week" sub={ready ? `Open weighted pipeline vs ${base.baselineDate}${base.partial ? ' (oldest snapshot available)' : ''}` : 'Open weighted pipeline vs 7 days ago'}
+          style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          {diff ? (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap', marginBottom: 16 }}>
+                <span className="num" style={{ fontSize: 30, fontWeight: 700 }}>{money(diff.endW)}</span>
+                <span className={'delta ' + (diff.endW >= diff.startW ? 'up' : 'down')} style={{ fontSize: 13 }}>
+                  {diff.endW >= diff.startW ? '+' : ''}{money(diff.endW - diff.startW)} vs {money(diff.startW)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {wfItems.map(x => {
+                  const max = Math.max(...wfItems.map(i => Math.abs(i.v)), 1);
+                  return (
+                    <div key={x.label} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 84px', gap: 10, alignItems: 'center' }}>
+                      <span className="faint" style={{ fontSize: 11.5 }}>{x.label}</span>
+                      <div style={{ height: 8, borderRadius: 99, background: 'var(--card-2)', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: (Math.abs(x.v) / max * 100) + '%', background: x.c, borderRadius: 99 }}></div>
+                      </div>
+                      <span className="num r" style={{ fontSize: 12.5, fontWeight: 700, textAlign: 'right', color: x.v >= 0 ? 'var(--c-commit)' : 'var(--c-risk)' }}>{x.v >= 0 ? '+' : ''}{money(x.v)}</span>
+                    </div>
+                  );
+                })}
+                {wfItems.length === 0 && <PulseEmpty>No pipeline movement since {base.baselineDate}.</PulseEmpty>}
+              </div>
+            </div>
+          ) : (
+            <PulseEmpty>{collecting ? 'Collecting history — snapshots started today. The first real week-over-week comparison unlocks as days accumulate.' : 'Loading snapshot…'}</PulseEmpty>
+          )}
+        </Panel>
+
+        <Panel title="This week in numbers" sub={`Since ${ready ? base.baselineDate : wkAgo}`}>
+          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[
+              { l: 'NEW DEALS', v: createdWk.length, s: money(createdWk.reduce((s, d) => s + d.amount, 0)) },
+              { l: 'STAGE MOVES', v: diff ? diff.stageMoves.length : '—', s: diff ? 'open deals' : 'collecting' },
+              { l: 'WON', v: diff ? diff.newlyWon.length : '—', s: diff ? money(diff.newlyWon.reduce((s, x) => s + x.d.amount, 0)) : 'collecting' },
+              { l: 'LOST', v: diff ? diff.newlyLost.length : '—', s: diff ? 'moved out' : 'collecting' },
+              { l: 'REPRICED', v: diff ? diff.repriced.length : '—', s: diff ? 'amount changed' : 'collecting' },
+              { l: 'CLOSING ≤ 14D', v: closingSoon.length, s: overdue.length + ' overdue' },
+            ].map(x => (
+              <div key={x.l}>
+                <div className="faint" style={{ fontSize: 10.5, letterSpacing: '.08em', fontWeight: 700 }}>{x.l}</div>
+                <div className="num" style={{ fontSize: 24, fontWeight: 700 }}>{x.v}</div>
+                <div className="faint" style={{ fontSize: 11 }}>{x.s}</div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <div className="grid col-2" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch', marginTop: 'var(--gap)' }}>
+        <PulsePanel title="New deals" sub="Created in the last 7 days" count={createdWk.length}>
+          {createdWk.slice(0, 8).map(d => <PulseRow key={d.id} d={d} note={'added ' + d.createdDate} onClick={() => drill1(d)} />)}
+          {createdWk.length === 0 && <PulseEmpty>No new deals this week.</PulseEmpty>}
+        </PulsePanel>
+        <PulsePanel title="Stage moves" sub={ready ? `Since ${base.baselineDate}` : 'Needs a week of snapshots'} count={diff ? diff.stageMoves.length : null}>
+          {diff && diff.stageMoves.slice(0, 8).map(({ d, b }) => <PulseRow key={d.id} d={d} note={`${b.stage} → ${d.stage}`} noteColor="var(--accent)" onClick={() => drill1(d)} />)}
+          {diff && diff.stageMoves.length === 0 && <PulseEmpty>No stage moves since {base.baselineDate}.</PulseEmpty>}
+          {!diff && <PulseEmpty>{collecting ? 'Snapshots started today — moves show up from tomorrow.' : 'Loading…'}</PulseEmpty>}
+        </PulsePanel>
+      </div>
+
+      <div className="grid col-2" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch', marginTop: 'var(--gap)' }}>
+        <PulsePanel title="Won & lost" sub={ready ? `Since ${base.baselineDate}` : 'Needs snapshots'}
+          count={diff ? diff.newlyWon.length + diff.newlyLost.length : null}>
+          {diff && diff.newlyWon.map(({ d }) => <PulseRow key={d.id} d={d} note="WON" noteColor="var(--c-commit)" onClick={() => drill1(d)} />)}
+          {diff && diff.newlyLost.map(({ d }) => <PulseRow key={d.id} d={d} note="LOST" noteColor="var(--c-risk)" onClick={() => drill1(d)} />)}
+          {diff && diff.newlyWon.length + diff.newlyLost.length === 0 && <PulseEmpty>Nothing closed since {base.baselineDate}.</PulseEmpty>}
+          {!diff && <PulseEmpty>{collecting ? 'Collecting history.' : 'Loading…'}</PulseEmpty>}
+        </PulsePanel>
+        <PulsePanel title="Needs attention" sub="Slipped closes · stale · overdue" count={(diff ? diff.slipped.length : 0) + stale.length + overdue.length}>
+          {diff && diff.slipped.slice(0, 4).map(({ d, b }) => <PulseRow key={'s' + d.id} d={d} note={`close slipped ${b.close_date} → ${d.closeDate}`} noteColor="var(--c-best)" onClick={() => drill1(d)} />)}
+          {overdue.slice(0, 4).map(d => <PulseRow key={'o' + d.id} d={d} note={'close date passed · ' + d.closeDate} noteColor="var(--c-risk)" onClick={() => drill1(d)} />)}
+          {stale.slice(0, 4).map(d => <PulseRow key={'t' + d.id} d={d} note={'no activity since ' + d.lastActivity} noteColor="var(--text-3)" onClick={() => drill1(d)} />)}
+          {(!diff || diff.slipped.length === 0) && overdue.length === 0 && stale.length === 0 && <PulseEmpty>Nothing needs attention. Clean week.</PulseEmpty>}
+        </PulsePanel>
+      </div>
+
+      <div className="grid col-2" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'stretch', marginTop: 'var(--gap)' }}>
+        <PulsePanel title="Flights starting" sub="Next 7 days" count={flightsStarting.length}>
+          {flightsStarting.slice(0, 6).map(d => <PulseRow key={d.id} d={d} note={'starts ' + d.flightStart} noteColor="var(--c-commit)" onClick={() => drill1(d)} />)}
+          {flightsStarting.length === 0 && <PulseEmpty>No flights starting this week.</PulseEmpty>}
+        </PulsePanel>
+        <PulsePanel title="Flights ending" sub="Next 7 days" count={flightsEnding.length}>
+          {flightsEnding.slice(0, 6).map(d => <PulseRow key={d.id} d={d} note={'ends ' + d.flightEnd} noteColor="var(--c-best)" onClick={() => drill1(d)} />)}
+          {flightsEnding.length === 0 && <PulseEmpty>No flights ending this week.</PulseEmpty>}
+        </PulsePanel>
+      </div>
+    </div>
+  );
+}
+
+/* Slim "This week" strip on the Forecast page — live-computable counts, links to Pulse. */
+function ThisWeekStrip() {
+  const raw = window.PLEX_RAW || window.PLEX_DATA;
+  const deals = raw.deals || [];
+  const wkAgo = isoDay(-7), today = isoDay(0), in14 = isoDay(14);
+  const created = deals.filter(d => d.createdDate && d.createdDate >= wkAgo);
+  const wonWk = deals.filter(d => d.status === 'Won' && d.closeDate && d.closeDate >= wkAgo);
+  const closing = deals.filter(d => d.open && d.closeDate && d.closeDate >= today && d.closeDate <= in14);
+  return (
+    <div style={{ marginTop: 'var(--gap)' }}>
+      <div className="card" style={{ padding: '13px 18px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+        <span className="faint" style={{ fontSize: 11, letterSpacing: '.1em', fontWeight: 700 }}>THIS WEEK</span>
+        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}><b className="num" style={{ color: 'var(--text)' }}>{created.length}</b> new deals · {fmt.money(created.reduce((s, d) => s + d.amount, 0))}</span>
+        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}><b className="num" style={{ color: 'var(--text)' }}>{wonWk.length}</b> won</span>
+        <span style={{ fontSize: 12.5, color: 'var(--text-2)' }}><b className="num" style={{ color: 'var(--text)' }}>{closing.length}</b> closing in 14 days</span>
+        <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => window.__goPulse && window.__goPulse()}>
+          <Icon name="spark" className="ico" />Open Pulse
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartStyle }) {
   const D = window.PLEX_DATA;
   const tip = useTooltip();
@@ -2030,6 +2256,8 @@ function ForecastPage({ lens, setLens, pipeline, setPipeline, fy, setFy, chartSt
           </Panel>
         </div>
       </div>
+
+      <ThisWeekStrip />
 
       <div style={{ marginTop: 'var(--gap)' }}>
         <Panel title="Insights" sub="Computed from the figures above — math shown, nothing inferred from missing data">
@@ -2850,7 +3078,7 @@ function DealQuarterTable({ deals }) {
   );
 }
 
-Object.assign(window, { ForecastPage, OverviewPage, PipelinePage, DealsPage, AccountsPage, ComingPage, PageHead, PartnerConc, DealRegister, KanbanBoard, StageChip, DrillModal, DealQuarterTable, UseCaseModal, RecognitionTimeline, FlightsModal });
+Object.assign(window, { ForecastPage, OverviewPage, PipelinePage, DealsPage, AccountsPage, ComingPage, PageHead, PartnerConc, DealRegister, KanbanBoard, StageChip, DrillModal, DealQuarterTable, UseCaseModal, RecognitionTimeline, FlightsModal, PulsePage });
   </script>
 
   <!-- ── app.jsx ── -->
@@ -2911,7 +3139,7 @@ function App() {
   const [useCaseOpen, setUseCaseOpen] = useStateA(false); // use-case map overlay
   const [flightsOpen, setFlightsOpen] = useStateA(false); // active-flights schedule dialog
 
-  useEffectA(() => { window.__openDrill = setDrill; return () => { window.__openDrill = null; }; }, []);
+  useEffectA(() => { window.__openDrill = setDrill; window.__goPulse = () => setPage('pulse'); return () => { window.__openDrill = null; window.__goPulse = null; }; }, []);
 
   // Pull live data from the proxy (/api/forecast). On success, replace the global
   // PLEX_DATA so every component re-reads fresh numbers. On failure (e.g. opened as
@@ -2958,6 +3186,7 @@ function App() {
   let view;
   if      (!booted)             view = <BootScreen />;
   else if (page === 'forecast') view = <ForecastPage {...pageProps} />;
+  else if (page === 'pulse')    view = <PulsePage {...pageProps} />;
   else if (page === 'overview') view = <OverviewPage {...pageProps} />;
   else if (page === 'pipeline') view = <PipelinePage {...pageProps} />;
   else if (page === 'deals')    view = <DealsPage {...pageProps} />;

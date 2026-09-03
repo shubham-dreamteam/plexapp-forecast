@@ -40,6 +40,10 @@ export async function onRequestGet(context) {
     const deals = dealsRaw.map(r => normalize(r, stagesMap, usersMap));
     const companies = companiesRaw.map(r => normalize(r, stagesMap, usersMap));
     const data = aggregate(deals, companies, contactsTotal);
+    // Best-effort daily snapshot into OUR D1 store (powers the Pulse page's
+    // week-over-week diffs — the CRM has no history API). Runs after the
+    // response is sent; never blocks or fails the forecast.
+    if (env.DB && context.waitUntil) context.waitUntil(snapshotDeals(env.DB, data.deals));
     // Cache at the edge for 60s so a flurry of refreshes doesn't hammer the CRM,
     // but the button still feels live.
     return json(data, 200, { 'Cache-Control': 'public, max-age=60' });
@@ -494,6 +498,8 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
       owner: ownerName(d),
       createdDate: (d.data && d.data._created_at) ? String(d.data._created_at).slice(0, 10) : null,
       closeDate: (d.data && d.data.expected_close_date) ? String(d.data.expected_close_date).slice(0, 10) : null,
+      lastActivity: (d.data && d.data.last_activity_date) ? String(d.data.last_activity_date).slice(0, 10) : null,
+      nextActivity: (d.data && d.data.next_activity_date) ? String(d.data.next_activity_date).slice(0, 10) : null,
       flightStart: (d.data && d.data.flight_start_date) ? String(d.data.flight_start_date).slice(0, 10) : null,
       flightEnd: (d.data && d.data.flight_end_date) ? String(d.data.flight_end_date).slice(0, 10) : null,
       tier: open ? tier(d) : null,   // commit | best | pipe
@@ -575,6 +581,26 @@ function aggregate(deals, companies = [], contactsTotal = 0) {
     pipelines: ['All pipelines', 'Default Pipeline'],
     fyOptions: ['FY2026', 'FY2027'],
   };
+}
+
+// One snapshot per day: skip if today's rows exist, else insert every deal and
+// prune snapshots older than 90 days. Writes go to OUR D1 only, never the CRM.
+async function snapshotDeals(DB, dealRows) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const seen = await DB.prepare('SELECT 1 AS x FROM deal_snapshots WHERE snapshot_date = ? LIMIT 1').bind(today).first();
+    if (seen) return;
+    const ins = DB.prepare(
+      'INSERT OR IGNORE INTO deal_snapshots (snapshot_date, deal_id, name, stage, status, amount, probability, weighted, close_date) VALUES (?,?,?,?,?,?,?,?,?)'
+    );
+    const stmts = dealRows.map(d => ins.bind(
+      today, String(d.id), d.name || null, d.stage || null, d.status || null,
+      d.amount || 0, d.probability || 0, d.weighted || 0, d.closeDate || null
+    ));
+    stmts.push(DB.prepare('DELETE FROM deal_snapshots WHERE snapshot_date < ?')
+      .bind(new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)));
+    await DB.batch(stmts);
+  } catch (e) { /* snapshots are best-effort; the forecast must never fail on them */ }
 }
 
 function json(obj, status = 200, extra = {}) {
