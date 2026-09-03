@@ -1392,13 +1392,6 @@ function Sidebar({ page, setPage, collapsed }) {
         <div className="div"></div>
         <span className="unit">Ad Sales</span>
       </div>
-      <div className="workspace">
-        <span className="dot"></span>
-        <span className="ws-txt">
-          <div className="ws-label">WORKSPACE</div>
-          <div className="ws-name">Revenue</div>
-        </span>
-      </div>
       <nav className="nav">
         {NAV.map(it => {
           const badge = it.id === 'deals'
@@ -1465,6 +1458,9 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search deals, advertisers, accounts…" />
         <kbd>⌘K</kbd>
       </label>
+      <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
+        <Icon name="info" size={15} className="i-ico" />How it works
+      </button>
       <div className="topbar-actions">
         <span title={booting ? 'Connecting to the CRM…' : (live ? 'Live from CRM' : 'Offline snapshot — refresh to pull live')}
           style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginRight: 4 }}>
@@ -1473,9 +1469,6 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
         </span>
         <button className="btn" onClick={onFlights} title="See which deals are flighting right now, or in any window">
           <Icon name="radio" className="ico" />Flights Active{activeFlights > 0 ? ` · ${activeFlights}` : ''}
-        </button>
-        <button className="info-pill" onClick={onUseCase} title="How a Plex ad deal flows — and why close date ≠ revenue date">
-          <Icon name="info" size={15} className="i-ico" />How it works
         </button>
         <button className="btn" onClick={onRefresh} disabled={loading} title="Pull the latest figures from the CRM">
           <Icon name="refresh" className={'ico' + (loading ? ' spin' : '')} />{loading ? 'Refreshing…' : 'Refresh'}
@@ -2322,9 +2315,12 @@ const FLIGHTS_OPT_COLS = [
 ];
 
 function FlightsModal({ open, onClose }) {
-  const [year, setYear] = React.useState(2026);
-  const [preset, setPreset] = React.useState('Now');
-  const [range, setRange] = React.useState(() => flightRange('Now', 2026));
+  // Defaults: the quarter we're in right now, in the current fiscal year.
+  const CUR_Q = 'Q' + (Math.floor(new Date().getMonth() / 3) + 1);
+  const CUR_YEAR = Math.min(2027, Math.max(2026, new Date().getFullYear()));
+  const [year, setYear] = React.useState(CUR_YEAR);
+  const [preset, setPreset] = React.useState(CUR_Q);
+  const [range, setRange] = React.useState(() => flightRange(CUR_Q, CUR_YEAR));
   const sort = useSort('flightStart', 'asc');
   const { cols, toggle } = useOptCols('plex_flights_cols');
   const active = FLIGHTS_OPT_COLS.filter(c => cols.includes(c.key));

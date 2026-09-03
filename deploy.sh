@@ -14,8 +14,8 @@ STAGE="$(mktemp -d)"
 cp index.html usecase.html "$STAGE"/
 cp wrangler.toml "$STAGE"/   # carries the D1 binding (goals store) into the deploy
 cp -r functions "$STAGE"/functions
-( cd "$STAGE" && npx --yes wrangler@4 pages deploy . \
-    --project-name plexapp-forecast --branch main --commit-dirty true )
+( cd "$STAGE" && npx --yes wrangler@4.128.0 pages deploy . \
+    --project-name plexapp-forecast --branch main --commit-dirty true )   # pinned: 4.129.0 is broken on npm
 rm -rf "$STAGE"
 
 echo "▶ Syncing source to GitHub…"
