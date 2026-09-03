@@ -469,6 +469,7 @@ h1.title { font-family: var(--font-display); font-weight: 700; font-size: 42px; 
 .fl-date input:focus { border-color: var(--accent); }
 .fl-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--c-commit);
   box-shadow: 0 0 8px var(--c-commit); margin-right: 8px; vertical-align: 1px; }
+.fl-showing { margin-left: auto; font-size: 11.5px; color: var(--text-2); font-family: var(--font-mono); white-space: nowrap; }
 
 /* header GOALS pill + popover editor */
 .goals-dd { position: relative; }
@@ -2326,10 +2327,14 @@ function FlightsModal({ open, onClose }) {
 
   const today = new Date().toISOString().slice(0, 10);
   const pickPreset = (p) => { setPreset(p); setRange(flightRange(p, year)); };
-  const pickYear = (y) => { const p = preset === 'Now' || preset === 'Custom' ? 'Full year' : preset; setYear(y); setPreset(p); setRange(flightRange(p, y)); };
+  // Year is its own toggle — it stays selected regardless of the period. Changing it
+  // re-applies the current period to that year (Now and Custom aren't year-relative).
+  const pickYear = (y) => { setYear(y); if (preset !== 'Now' && preset !== 'Custom') setRange(flightRange(preset, y)); };
   const [start, end] = range;
   const setStart = (v) => { if (v) { setPreset('Custom'); setRange([v, end < v ? v : end]); } };
   const setEnd = (v) => { if (v) { setPreset('Custom'); setRange([start > v ? v : start, v]); } };
+  const fmtD = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const showing = preset === 'Now' ? `Today · ${fmtD(today)}` : `${fmtD(start)} → ${fmtD(end)}`;
 
   const pool = ((window.PLEX_RAW && window.PLEX_RAW.deals) || (window.PLEX_DATA && window.PLEX_DATA.deals) || []);
   const rows = pool
@@ -2353,10 +2358,11 @@ function FlightsModal({ open, onClose }) {
           <button className="modal-x" onClick={onClose} aria-label="Close"><Icon name="close" size={17} /></button>
         </div>
         <div className="fl-controls">
-          <div className="seg-mini">{[2026, 2027].map(y => <button key={y} className={year === y && preset !== 'Now' ? 'on' : ''} onClick={() => pickYear(y)}>{y}</button>)}</div>
+          <div className="seg-mini">{[2026, 2027].map(y => <button key={y} className={year === y ? 'on' : ''} onClick={() => pickYear(y)}>{y}</button>)}</div>
           <div className="seg-mini">{FLIGHT_PRESETS.map(p => <button key={p} className={preset === p ? 'on' : ''} onClick={() => pickPreset(p)}>{p}</button>)}</div>
           <label className="fl-date">From <input type="date" value={start} onChange={e => setStart(e.target.value)} /></label>
           <label className="fl-date">To <input type="date" value={end} onChange={e => setEnd(e.target.value)} /></label>
+          <span className="fl-showing">Showing: {showing}</span>
         </div>
         <div className="modal-stats">
           <div className="mstat"><div className="ms-lab">Deals</div><div className="ms-val num">{rows.length}</div></div>
