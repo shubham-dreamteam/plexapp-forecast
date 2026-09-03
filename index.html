@@ -2134,8 +2134,16 @@ function PulsePage() {
   return (
     <div className="page">
       <PageHead title="Pulse" plain
-        right={<Segmented value={'Last ' + days + ' days'} options={['Last 7 days', 'Last 14 days', 'Last 30 days']}
-          onChange={(l) => setDays(parseInt(l.replace(/\D/g, ''), 10))} />} />
+        right={<React.Fragment>
+          {base && base.firstSnapshotDate && (
+            <span className="faint" style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)' }}
+              title="Daily snapshots began this day — movement can only be measured from here onwards.">
+              Tracking since {base.firstSnapshotDate}
+            </span>
+          )}
+          <Segmented value={'Last ' + days + ' days'} options={['Last 7 days', 'Last 14 days', 'Last 30 days']}
+            onChange={(l) => setDays(parseInt(l.replace(/\D/g, ''), 10))} />
+        </React.Fragment>} />
 
       <Panel title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           <span className="p-ico" style={{ color: 'var(--accent)' }}><Icon name="up" size={15} /></span>Pipeline movement

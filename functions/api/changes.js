@@ -15,6 +15,8 @@ export async function onRequestGet(context) {
   const days = Math.min(90, Math.max(1, parseInt(new URL(request.url).searchParams.get('days') || '7', 10) || 7));
   const target = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   try {
+    const first = await env.DB.prepare('SELECT MIN(snapshot_date) AS d FROM deal_snapshots').first();
+    const firstSnapshotDate = (first && first.d) || null;
     let row = await env.DB.prepare(
       'SELECT snapshot_date FROM deal_snapshots WHERE snapshot_date <= ? ORDER BY snapshot_date DESC LIMIT 1'
     ).bind(target).first();
@@ -23,9 +25,9 @@ export async function onRequestGet(context) {
       row = await env.DB.prepare('SELECT snapshot_date FROM deal_snapshots ORDER BY snapshot_date ASC LIMIT 1').first();
       partial = true;
     }
-    if (!row) return json({ baselineDate: null, requestedDays: days, partial: true, rows: [] }, 200, { 'Cache-Control': 'no-store' });
+    if (!row) return json({ baselineDate: null, firstSnapshotDate, requestedDays: days, partial: true, rows: [] }, 200, { 'Cache-Control': 'no-store' });
     const { results } = await env.DB.prepare('SELECT * FROM deal_snapshots WHERE snapshot_date = ?').bind(row.snapshot_date).all();
-    return json({ baselineDate: row.snapshot_date, requestedDays: days, partial, rows: results || [] }, 200, { 'Cache-Control': 'no-store' });
+    return json({ baselineDate: row.snapshot_date, firstSnapshotDate, requestedDays: days, partial, rows: results || [] }, 200, { 'Cache-Control': 'no-store' });
   } catch (e) {
     return json({ error: 'Failed to read snapshots', detail: String(e && e.message || e) }, 500);
   }
