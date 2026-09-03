@@ -1490,7 +1490,7 @@ function Topbar({ onCollapse, query, setQuery, onRefresh, loading, live, updated
           {booting ? 'CONNECTING…' : (live ? 'LIVE' : 'SNAPSHOT') + ' · ' + updated}
         </span>
         <button className="btn" onClick={onFlights} title="Deals flighting this quarter — click for any window">
-          <Icon name="radio" className="ico" />Flights Active{activeFlights > 0 ? ` · ${activeFlights}` : ''}
+          <Icon name="radio" className="ico" />Active Flights{activeFlights > 0 ? ` · ${activeFlights}` : ''}
         </button>
         <button className="btn" onClick={onRefresh} disabled={loading} title="Pull the latest figures from the CRM">
           <Icon name="refresh" className={'ico' + (loading ? ' spin' : '')} />{loading ? 'Refreshing…' : 'Refresh'}
